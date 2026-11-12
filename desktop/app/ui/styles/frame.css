@@ -1,0 +1,633 @@
+/* Frame (desktop/DESIGN.md §4): top bar · rail · work area (header, body, context line) · pending row · readout bar.
+   1280x800: 32 + 32 + body + 24 + 32 + 28; the pending row exists only while there are edits; the context line only with Hints: on. */
+
+/* hidden always hides, whatever display a class sets (why lines, pips, the pending row, the sheet footer) */
+[hidden] {
+  display: none !important;
+}
+
+.lx-app {
+  display: grid;
+  height: 100vh;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  grid-template-rows: var(--topbar) minmax(0, 1fr) auto auto;
+  grid-template-areas:
+    "top top"
+    "rail work"
+    "rail pend"
+    "read read";
+  background: var(--n0);
+}
+
+/* ---------------------------------------------------------------- top bar */
+.lx-top {
+  grid-area: top;
+  z-index: var(--z-bar);
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  min-width: 0;
+  padding: 0 var(--s3) 0 var(--s4);
+  background: var(--n0);
+  border-bottom: var(--bw) solid var(--rule-strong);
+  white-space: nowrap;
+}
+
+.lx-wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  font-family: var(--mono);
+  font-size: var(--t-md);
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--fg);
+}
+
+.lx-wordmark--lg {
+  font-size: var(--t-lg);
+}
+
+.lx-wordmark .lx-wm-os {
+  color: var(--fg3);
+  font-weight: var(--w-reg);
+}
+
+.lx-wordmark .lx-wm-dash {
+  display: inline-block;
+  align-self: center;
+  width: 0.375rem;
+  height: 2px;
+  margin: 1px 0.1875rem 0;
+  background: var(--fg3);
+}
+
+.lx-wordmark .lx-wm-tool {
+  font-weight: var(--w-med);
+}
+
+.lx-top-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 0.4375rem 0;
+  background: var(--rule-strong);
+}
+
+.lx-anns {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.lx-cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  min-width: 0;
+}
+
+.lx-cluster-k {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--fg3);
+}
+
+.lx-cluster-v {
+  font-family: var(--mono);
+  font-size: var(--t-md);
+  color: var(--fg);
+}
+
+/* the ACCEPTED value is a button (-> Profiles): looks like the value, underline on hover */
+.lx-cluster-btn {
+  height: var(--ctl);
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lx-cluster-btn:hover {
+  text-decoration: underline;
+  text-decoration-color: var(--edge);
+  text-underline-offset: 0.1875rem;
+}
+
+.lx-top .lx-confirm .lx-btn {
+  height: 1.25rem;
+}
+
+/* ---------------------------------------------------------------- rail (text soft-keys) */
+.lx-rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  padding: var(--s2) 0;
+  background: var(--n0);
+  border-right: var(--bw) solid var(--rule-strong);
+  min-height: 0;
+}
+
+.lx-rail-gap {
+  height: var(--s3);
+}
+
+.lx-rail-end {
+  margin-top: auto;
+  padding-top: var(--s2);
+  border-top: var(--bw) solid var(--rule);
+}
+
+.lx-key {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 1.75rem;
+  margin-right: -1px; /* the active key covers the rail's rule and opens into the work area */
+  padding: 0 var(--s3) 0 var(--s4);
+  color: var(--fg2);
+  font-size: var(--t-md);
+  cursor: pointer;
+  transition: color var(--m-fast) var(--ease), background-color var(--m-fast) var(--ease);
+}
+
+.lx-key-d {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  color: var(--fg3);
+}
+
+.lx-key:hover {
+  color: var(--fg);
+  background: var(--n1);
+}
+
+.lx-key[aria-current="page"] {
+  color: var(--fg);
+  font-weight: var(--w-med);
+  background: var(--n1);
+}
+
+.lx-key[aria-current="page"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--fg);
+}
+
+.lx-key:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ---------------------------------------------------------------- work area */
+.lx-work {
+  grid-area: work;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--n0);
+}
+
+.lx-head {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s4);
+  flex: 0 0 var(--tabrow);
+  height: var(--tabrow);
+  padding: 0 var(--s3) 0 var(--s4);
+  border-bottom: var(--bw) solid var(--rule-strong);
+  white-space: nowrap;
+}
+
+.lx-head-t {
+  align-self: center;
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+  font-weight: var(--w-semi);
+  color: var(--fg);
+}
+
+h1.lx-head-t {
+  margin: 0;
+}
+
+.lx-head-mid {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.lx-head-mid > .lx-head-sub {
+  align-self: center;
+}
+
+/* the frame's lock line (editors locked while a Read runs): said once, in the header */
+.lx-head-lock {
+  align-self: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.lx-head-lock .lx-why {
+  display: inline;
+  margin: 0;
+}
+
+.lx-head-sub {
+  align-self: center;
+  font-size: var(--t-sm);
+  color: var(--fg3);
+}
+
+.lx-head-end {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+/* the body and what floats over it: the commit sheet (full body height) and the toasts (bottom-right) */
+.lx-stage {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.lx-body {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lx-body:focus {
+  outline: none; /* a container that takes focus after a screen switch (F-11), not a control */
+}
+
+/* QA-16: while the Review sheet is open the body keeps clear of it (the sheet is --sheet-w wide, over the stage's right edge), so the fields being
+   reviewed stay visible beside it. Below 1500 px the sheet covers the body as before (there is no room for both). */
+@media (min-width: 1500px) {
+  .lx-stage:has(> .lx-sheet[data-open="true"]) > .lx-body {
+    margin-right: var(--sheet-w);
+  }
+}
+
+.lx-work > .lx-ctx {
+  flex: 0 0 var(--ctx);
+}
+
+/* panels tile the body; the 1 px gap shows the seam colour, so panels are ruled, not carded */
+.lx-tiles {
+  display: grid;
+  gap: 1px;
+  min-height: 100%;
+  background: var(--rule-strong);
+}
+
+.lx-tiles > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+.lx-split {
+  grid-template-columns: var(--pane-units) minmax(0, 1fr);
+}
+
+.lx-split-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.lx-split-side {
+  grid-template-columns: minmax(0, 1fr) 20rem;
+}
+
+@media (max-width: 1179px) {
+  .lx-split {
+    grid-template-columns: 18rem minmax(0, 1fr);
+  }
+}
+
+/* ---------------------------------------------------------------- pending row (one for all of Tune) */
+.lx-pend {
+  grid-area: pend;
+  z-index: var(--z-bar);
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  height: var(--pendrow);
+  min-width: 0;
+  padding: 0 var(--s3) 0 var(--s4);
+  background: var(--n1);
+  border-top: var(--bw) solid var(--set-edge);
+  white-space: nowrap;
+}
+
+.lx-pend-n {
+  font-weight: var(--w-semi);
+  color: var(--set);
+}
+
+.lx-pend-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg2);
+}
+
+.lx-pend-list .lx-arrow {
+  color: var(--fg3);
+  padding: 0 2px;
+}
+
+.lx-pend .lx-pend-why {
+  display: block;
+  flex: 0 1 auto;
+  max-width: 50%;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.lx-pend .lx-confirm {
+  flex: 0 0 auto;
+}
+
+.lx-pend-list .lx-sep {
+  color: var(--rule-strong);
+  padding: 0 var(--s2);
+}
+
+/* ---------------------------------------------------------------- readout bar */
+.lx-read {
+  grid-area: read;
+  z-index: var(--z-bar);
+  display: flex;
+  align-items: stretch;
+  height: var(--readout);
+  min-width: 0;
+  background: var(--n0);
+  border-top: var(--bw) solid var(--rule-strong);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.lx-read {
+  transition: height var(--m-panel) var(--ease);
+}
+
+.lx-read[data-expanded="true"] {
+  height: var(--readout-x);
+}
+
+.lx-ro-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+/* each value is a button: select it to expand the bar (60 s sparklines for all six) */
+.lx-ro {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0.25rem;
+  min-width: 0;
+  padding: 0 var(--s3);
+  border: 0;
+  border-right: var(--bw) solid var(--rule);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--m-fast) var(--ease);
+}
+
+.lx-ro:first-child {
+  padding-left: var(--s4);
+}
+
+.lx-ro:hover {
+  background: var(--n1);
+}
+
+.lx-ro:focus-visible {
+  outline-offset: -2px;
+}
+
+.lx-ro-line {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.lx-ro-k {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  color: var(--fg3);
+}
+
+.lx-ro-v {
+  font-family: var(--mono);
+  font-size: var(--t-md);
+  font-weight: var(--w-med);
+  color: var(--meas);
+  text-align: right;
+}
+
+.lx-ro-v[data-na="true"] {
+  min-width: 0;
+  font-weight: var(--w-reg);
+  color: var(--fg3);
+}
+
+.lx-ro-v.lx-w3 { min-width: 3ch; }
+.lx-ro-v.lx-w4 { min-width: 4ch; }
+.lx-ro-v.lx-w5 { min-width: 5ch; }
+
+.lx-ro-u {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg3);
+}
+
+.lx-ro-na {
+  font-family: var(--mono);
+  color: var(--fg3);
+}
+
+.lx-spark {
+  width: 2.75rem;
+  height: 0.875rem;
+  overflow: visible;
+}
+
+.lx-spark polyline,
+.lx-spark path {
+  fill: none;
+  stroke: var(--fg2);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.lx-spark--lg {
+  display: none;
+  width: 7.5rem;
+  height: 1.5rem;
+}
+
+.lx-read[data-expanded="true"] .lx-spark--lg {
+  display: block;
+}
+
+.lx-read[data-expanded="true"] .lx-ro-line .lx-spark {
+  display: none;
+}
+
+.lx-read-end {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+  margin-left: auto;
+  padding: 0 var(--s3);
+}
+
+.lx-read-end .lx-cluster-k {
+  margin-right: var(--s1);
+}
+
+.lx-key .lx-mark {
+  margin-left: 0.375rem;
+}
+
+/* columns and cells that only exist at >= 1180 px (live columns of the unit table, extra readouts) */
+@media (max-width: 1179px) {
+  .lx-wide {
+    display: none !important;
+  }
+}
+
+/* ---------------------------------------------------------------- popover anchoring (components/popover.js sets --pop-x / --pop-y from the trigger) */
+.lx-pop--fixed {
+  position: fixed;
+  left: var(--pop-x, 0);
+  top: var(--pop-y, 0);
+}
+
+.lx-pop .lx-panel-b {
+  padding: var(--s2) var(--s3);
+}
+
+.lx-pop-sec {
+  padding: var(--s2) var(--s3) 0;
+}
+
+.lx-pop-line {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+  color: var(--fg2);
+  white-space: normal;
+}
+
+.lx-pop-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  padding: var(--s1) var(--s2) 0 var(--s2);
+}
+
+/* ---------------------------------------------------------------- commit sheet shell: lives in the stage, slides over the body */
+.lx-stage > .lx-sheet[data-open="false"] {
+  visibility: hidden;
+  transition: transform var(--m-panel) var(--ease), visibility 0s linear var(--m-panel);
+}
+
+.lx-sheet-head .lx-sheet-t {
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- the context line's reason lead (a control with no room for its why line) */
+.lx-ctx-lead {
+  color: var(--fg2);
+  font-weight: var(--w-semi);
+}
+
+.lx-ctx-lead[data-kind="refused"] {
+  color: var(--fault);
+}
+
+.lx-ctx-lead[data-kind="warn"] {
+  color: var(--warn);
+}
+
+/* ---------------------------------------------------------------- editors locked while a Read is in flight (data-lock on the body) */
+.lx-body[data-lock] input:not([type="checkbox"]):not([type="radio"]),
+.lx-body[data-lock] textarea {
+  border-style: dashed;
+  color: var(--fg3);
+  cursor: not-allowed;
+}
+
+.lx-body[data-lock] .lx-in {
+  border-style: dashed;
+  border-color: var(--rule-strong);
+  background: transparent;
+}
+
+/* QA-22: a rail key's tip ("Stress (Alt+3)") opens to the RIGHT of the rail, over the work area, never over the neighbouring keys' labels (the native
+   title tooltip sat under the pointer, on top of them). Shown after a short hover delay and on keyboard focus. */
+.lx-key[data-tip]::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  z-index: var(--z-pop);
+  padding: 0 var(--s2);
+  border: var(--bw) solid var(--rule-strong);
+  background: var(--n2);
+  box-shadow: var(--e-overlay);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  line-height: 1.25rem;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  visibility: hidden;
+  transform: translate(var(--s2), -50%);
+  transition: opacity var(--m-fast) var(--ease) 0s, visibility 0s linear var(--m-fast);
+}
+
+.lx-key[data-tip]:hover::after,
+.lx-key[data-tip]:focus-visible::after {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--m-fast) var(--ease) 0.5s, visibility 0s linear 0.5s;
+}
+
+/* R2-09: pressed (nav-rail.js sets data-tip-off until the pointer leaves / focus moves on): no tip, at once */
+.lx-key[data-tip][data-tip-off]::after,
+.lx-key[data-tip][data-tip-off]:hover::after,
+.lx-key[data-tip][data-tip-off]:focus-visible::after {
+  opacity: 0;
+  visibility: hidden;
+  transition: none;
+}

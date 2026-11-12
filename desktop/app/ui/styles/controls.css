@@ -1,0 +1,600 @@
+/* Controls (desktop/DESIGN.md §5.1–§5.7): button ladder L0–L4, numeric field / stepper, text field, select, checkbox, segmented, tabs, tag,
+   annunciator. States are attributes the code already has a reason to set: disabled, aria-pressed, aria-selected, aria-expanded, aria-busy,
+   aria-invalid, data-state. Never opacity for "disabled": a disabled control always carries its reason next to it (.lx-why). */
+
+/* ================================================================ buttons */
+.lx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.375rem;
+  height: var(--ctl);
+  padding: 0 0.625rem;
+  border: var(--bw) solid var(--edge);
+  border-radius: var(--r1);
+  background: var(--n2);
+  color: var(--fg);
+  font-size: var(--t-md);
+  line-height: 1;
+  font-weight: var(--w-med);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--m-fast) var(--ease), border-color var(--m-fast) var(--ease), color var(--m-fast) var(--ease);
+}
+
+.lx-btn:hover {
+  background: var(--n3);
+  border-color: var(--fg3);
+}
+
+.lx-btn:active {
+  background: var(--rule-strong);
+}
+
+.lx-cost {
+  margin-left: 2px;
+  padding-left: 0.5rem;
+  border-left: var(--bw) solid var(--rule-strong);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  font-weight: var(--w-reg);
+  color: var(--fg3);
+}
+
+/* L0 quiet: navigate, close, view toggles, Discard (local only) */
+.lx-btn--l0 {
+  padding: 0 0.5rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg2);
+}
+
+.lx-btn--l0:hover {
+  color: var(--fg);
+  background: var(--n2);
+  border-color: transparent;
+}
+
+/* L1 read: asks the helper / CPU for values; may cost mailbox requests (each one a WRMSR to 0x150), changes no setting */
+.lx-btn--l1 {
+  background: transparent;
+}
+
+/* L2 local: plans, files, copies — changes no CPU state (the default look) */
+
+/* L3 run: starts a load (stress, curve measurement) that heats the CPU for a while — inverse neutral, never a hue */
+.lx-btn--l3 {
+  height: var(--ctl-lg);
+  padding: 0 0.875rem;
+  background: var(--run);
+  border-color: var(--run);
+  color: var(--on-run);
+  font-weight: var(--w-semi);
+}
+
+.lx-btn--l3:hover {
+  background: var(--run-hover);
+  border-color: var(--run-hover);
+}
+
+.lx-btn--l3 .lx-cost {
+  color: var(--on-run);
+  border-left-color: var(--run-cost-rule);
+  opacity: 0.7;
+}
+
+/* L4 write: sends CPU register writes (mailbox, MSR, powercap). Exactly one per screen state; lives in the commit sheet. */
+.lx-btn--l4 {
+  height: var(--ctl-lg);
+  padding: 0 1rem;
+  background: var(--write);
+  border-color: var(--write);
+  color: var(--on-write);
+  font-weight: var(--w-semi);
+}
+
+.lx-btn--l4:hover {
+  background: var(--write-hover);
+  border-color: var(--write-hover);
+}
+
+.lx-btn--l4 .lx-cost {
+  color: var(--on-write);
+  border-left-color: var(--write-cost-rule);
+  opacity: 0.75;
+}
+
+.lx-btn--l4:focus-visible,
+.lx-btn--l3:focus-visible {
+  outline-offset: 2px;
+}
+
+/* disabled: no opacity; dashed quiet outline, readable text, reason beside it */
+.lx-btn:disabled,
+.lx-btn[aria-disabled="true"] {
+  background: transparent;
+  border-color: var(--rule-strong);
+  border-style: dashed;
+  color: var(--fg3);
+  cursor: not-allowed;
+}
+
+.lx-btn:disabled .lx-cost,
+.lx-btn[aria-disabled="true"] .lx-cost {
+  color: var(--fg3);
+  border-left-color: var(--rule-strong);
+  opacity: 1;
+}
+
+/* busy: label states the step; a 2 px rule at the bottom shows progress (--p set by code via style.setProperty) */
+.lx-btn[aria-busy="true"] {
+  position: relative;
+  cursor: progress;
+}
+
+.lx-btn[aria-busy="true"]::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  bottom: -1px;
+  height: 2px;
+  width: calc(var(--p, 0) * (100% + 2px));
+  background: currentColor;
+}
+
+.lx-btn--l4[aria-busy="true"] {
+  background: transparent;
+  color: var(--write);
+}
+
+/* ================================================================ numeric field (+ optional stepper) */
+.lx-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  vertical-align: middle;
+}
+
+.lx-in {
+  display: inline-flex;
+  align-items: stretch;
+  height: var(--ctl);
+  border: var(--bw) solid var(--edge);
+  border-radius: var(--r1);
+  background: var(--well);
+  transition: border-color var(--m-fast) var(--ease);
+}
+
+.lx-in:hover {
+  border-color: var(--fg3);
+}
+
+.lx-in input {
+  width: calc(var(--w, 6) * 1ch + 0.875rem);
+  min-width: 0;
+  padding: 0 0.4375rem;
+  border: 0;
+  border-radius: var(--r1);
+  background: transparent;
+  color: var(--fg);
+  font-family: var(--mono);
+  font-size: var(--t-md);
+  text-align: right;
+  outline: none;
+}
+
+.lx-in input::placeholder {
+  color: var(--fg2);
+}
+
+.lx-in:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus); /* a 2 px ring that hugs the field; no second box */
+}
+
+/* widths in characters of the widest legal value */
+.lx-w3 { --w: 3; }
+.lx-w4 { --w: 4; }
+.lx-w5 { --w: 5; }
+.lx-w6 { --w: 6; }
+.lx-w7 { --w: 7; }
+.lx-w8 { --w: 8; }
+.lx-w10 { --w: 10; }
+
+.lx-step {
+  width: 1.375rem;
+  padding: 0;
+  border: 0;
+  border-left: var(--bw) solid var(--rule-strong);
+  background: var(--n2);
+  color: var(--fg2);
+  font-family: var(--mono);
+  font-size: var(--t-md);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.lx-step:first-child {
+  border-left: 0;
+  border-right: var(--bw) solid var(--rule-strong);
+  border-radius: var(--r1) 0 0 var(--r1);
+}
+
+.lx-step:last-child {
+  border-radius: 0 var(--r1) var(--r1) 0;
+}
+
+.lx-step:hover {
+  color: var(--fg);
+  background: var(--n3);
+}
+
+.lx-field-u {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg3);
+}
+
+/* set: the value differs from what the CPU holds */
+.lx-field[data-state="set"] .lx-in {
+  border-color: var(--set-edge);
+  background: var(--set-bg);
+}
+
+.lx-field[data-state="set"] input {
+  color: var(--set);
+}
+
+/* mixed: several units selected with different values; placeholder shows the range */
+.lx-field[data-state="mixed"] .lx-in {
+  border-style: dashed;
+}
+
+/* refused: typed text is kept (never clamped); the reason sits in the .lx-why the input is described by */
+.lx-field[data-state="refused"] .lx-in,
+.lx-in:has(input[aria-invalid="true"]) {
+  border-color: var(--fault);
+  background: var(--fault-bg);
+}
+
+/* disabled / reading */
+.lx-field[data-state="disabled"] .lx-in,
+.lx-field[data-state="reading"] .lx-in,
+.lx-in:has(input:disabled) {
+  border-style: dashed;
+  border-color: var(--rule-strong);
+  background: transparent;
+}
+
+.lx-in input:disabled {
+  color: var(--fg3);
+  cursor: not-allowed;
+}
+
+.lx-in:has(input:disabled) .lx-step {
+  display: none;
+}
+
+/* ================================================================ text field, select, checkbox */
+.lx-text,
+.lx-select {
+  height: var(--ctl);
+  padding: 0 0.5rem;
+  border: var(--bw) solid var(--edge);
+  border-radius: var(--r1);
+  background: var(--well);
+  color: var(--fg);
+  font-size: var(--t-md);
+}
+
+.lx-text::placeholder {
+  color: var(--fg3);
+}
+
+.lx-text.lx-mono {
+  font-family: var(--mono);
+}
+
+.lx-text:hover,
+.lx-select:hover {
+  border-color: var(--fg3);
+}
+
+.lx-select {
+  appearance: none;
+  padding-right: 1.5rem;
+  background-image: linear-gradient(45deg, transparent 50%, var(--fg2) 50%), linear-gradient(135deg, var(--fg2) 50%, transparent 50%);
+  background-position: calc(100% - 0.8125rem) 50%, calc(100% - 0.5625rem) 50%;
+  background-size: 0.25rem 0.25rem, 0.25rem 0.25rem;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+
+.lx-check {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 0.75rem;
+  height: 0.75rem;
+  margin: 0;
+  border: var(--bw) solid var(--edge);
+  border-radius: 0;
+  background: var(--well);
+  vertical-align: middle;
+  cursor: pointer;
+}
+
+.lx-check:checked {
+  background: var(--fg);
+  box-shadow: inset 0 0 0 2px var(--well);
+}
+
+.lx-check:indeterminate {
+  background: linear-gradient(var(--fg2), var(--fg2)) center / 0.375rem 2px no-repeat var(--well);
+}
+
+/* ================================================================ segmented (one joined control for every 2–5-way choice) */
+.lx-seg {
+  display: inline-flex;
+  height: var(--ctl);
+  border: var(--bw) solid var(--edge);
+  border-radius: var(--r1);
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.lx-seg > button {
+  padding: 0 0.625rem;
+  border: 0;
+  border-left: var(--bw) solid var(--rule-strong);
+  background: transparent;
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--m-fast) var(--ease), color var(--m-fast) var(--ease);
+}
+
+.lx-seg > button:first-child {
+  border-left: 0;
+}
+
+.lx-seg > button:hover {
+  color: var(--fg);
+  background: var(--n2);
+}
+
+.lx-seg > button[aria-pressed="true"],
+.lx-seg > button[aria-checked="true"] {
+  background: var(--n3);
+  color: var(--fg);
+  font-weight: var(--w-med);
+  box-shadow: inset 0 -2px 0 var(--fg);
+}
+
+.lx-seg > button:disabled {
+  color: var(--fg3);
+  cursor: not-allowed;
+  background: transparent;
+  box-shadow: none;
+}
+
+.lx-seg > button:focus-visible {
+  outline-offset: -2px;
+}
+
+/* ================================================================ tabs (sub-screens: Tune › Cores · Frequency · Power · Ring & uncore) */
+.lx-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: var(--s1);
+}
+
+.lx-tabs > [role="tab"] {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.625rem;
+  border: 0;
+  background: transparent;
+  color: var(--fg2);
+  font-size: var(--t-md);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lx-tabs > [role="tab"]:hover {
+  color: var(--fg);
+}
+
+.lx-tabs > [role="tab"][aria-selected="true"] {
+  color: var(--fg);
+  font-weight: var(--w-med);
+}
+
+.lx-tabs > [role="tab"][aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 0.375rem;
+  right: 0.375rem;
+  bottom: -1px;
+  height: 2px;
+  background: var(--fg);
+}
+
+.lx-tabs > [role="tab"]:focus-visible {
+  outline-offset: -4px;
+}
+
+.lx-tabs .lx-mark {
+  margin-left: 2px;
+}
+
+/* ================================================================ tag (static label, never interactive, never a pill) */
+.lx-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 1.125rem;
+  padding: 0 0.375rem;
+  border: var(--bw) solid var(--rule-strong);
+  border-radius: var(--r1);
+  color: var(--fg2);
+  font-size: var(--t-xs);
+  line-height: 1;
+  font-weight: var(--w-med);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.lx-tag--mono {
+  font-family: var(--mono);
+  font-weight: var(--w-reg);
+}
+
+/* persistence class of a section: what clears it */
+.lx-tag--persist {
+  font-family: var(--mono);
+  font-weight: var(--w-reg);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--fg3);
+  border-style: dashed;
+}
+
+.lx-tag--ok { color: var(--ok); border-color: var(--ok-line); }
+.lx-tag--warn { color: var(--warn); border-color: var(--warn-line); }
+.lx-tag--fault { color: var(--fault); border-color: var(--fault-line); }
+.lx-tag--set { color: var(--set); border-color: var(--set-line); }
+
+/* ================================================================ annunciator (rectangular legend; dark when idle, lit when the condition is active) */
+.lx-ann {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  height: 1.125rem;
+  padding: 0 0.375rem;
+  border: var(--bw) solid var(--rule-strong);
+  border-radius: var(--r0);
+  background: transparent;
+  color: var(--fg3);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+  line-height: 1;
+  font-weight: var(--w-med);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: default;
+}
+
+button.lx-ann {
+  cursor: pointer;
+}
+
+button.lx-ann:hover {
+  border-color: var(--fg3);
+  color: var(--fg2);
+}
+
+.lx-ann[data-state="unknown"] {
+  border-style: dashed;
+}
+
+.lx-ann[data-state="lit-warn"] {
+  background: var(--warn);
+  border-color: var(--warn);
+  color: var(--on-lit);
+}
+
+.lx-ann[data-state="lit-fault"] {
+  background: var(--fault);
+  border-color: var(--fault);
+  color: var(--on-lit);
+}
+
+.lx-ann[data-state="lit-info"] {
+  background: var(--lit-info);
+  border-color: var(--lit-info);
+  color: var(--on-lit);
+}
+
+button.lx-ann[data-state^="lit"]:hover {
+  color: var(--on-lit);
+  border-color: var(--fg);
+}
+
+.lx-ann .lx-duty {
+  font-weight: var(--w-reg);
+  opacity: 0.8;
+}
+
+/* state pip: a 6 px square LED inside an unlit legend (link, mode) */
+.lx-pip {
+  width: 0.375rem;
+  height: 0.375rem;
+  flex: 0 0 auto;
+  border: var(--bw) solid var(--fg3);
+  background: transparent;
+}
+
+.lx-pip[data-pip="ok"] { background: var(--ok); border-color: var(--ok); }
+.lx-pip[data-pip="warn"] { background: var(--warn); border-color: var(--warn); }
+.lx-pip[data-pip="fault"] { background: var(--fault); border-color: var(--fault); }
+.lx-pip[data-pip="set"] { background: var(--set); border-color: var(--set); }
+
+/* pending mark: the cyan square after an edited value, unit or tab */
+.lx-mark {
+  display: inline-block;
+  width: 0.375rem;
+  height: 0.375rem;
+  background: var(--set);
+  vertical-align: middle;
+}
+
+/* favored core marker */
+.lx-fav {
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+/* inline link (Tips, "Open Frequency") — underlined, never coloured */
+.lx-link {
+  color: var(--fg);
+  text-decoration: underline;
+  text-decoration-color: var(--edge);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.1875rem;
+  cursor: pointer;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+}
+
+.lx-link:hover {
+  text-decoration-color: var(--fg);
+}
+
+/* ================================================================ inline confirm: replaces the control in place (no modal in the webview) */
+.lx-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s2);
+  height: var(--ctl);
+  padding: 0 2px 0 var(--s2);
+  border: var(--bw) solid var(--warn);
+  border-radius: var(--r1);
+  background: var(--warn-bg);
+  white-space: nowrap;
+}
+
+.lx-confirm-t {
+  color: var(--fg);
+  font-size: var(--t-sm);
+}
+
+.lx-confirm .lx-btn {
+  height: 1.25rem;
+  padding: 0 0.5rem;
+  font-size: var(--t-sm);
+}

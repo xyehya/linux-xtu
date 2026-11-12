@@ -1,0 +1,23 @@
+# /etc/linux-xtu/restore.toml - settings of the unattended boot restore (linux-xtu-restore.service; linux_xtu.bootrestore). Root-owned, not group/world-writable:
+# the run refuses (skips and disarms) on an untrusted or invalid file. install.sh seeds it only when absent; these are the defaults.
+
+# Uptime in seconds before the apply (30..3600; the timer starts the service at 30 s).
+apply_delay_s = 60
+
+# Running time in seconds (a suspend does not count) at which the boot counts as healthy and the clean marker is written (120..86400; never sooner than
+# 120 s after the apply). A boot that ends before that (hang, crash, power loss, a stop that is not a shutdown) makes the next boot skip and disarm.
+healthy_uptime_s = 600
+
+# Read every word back after the apply and compare it with EXPECTED-words.txt (a mismatch disarms).
+verify = true
+
+# "require": the previous boot's kernel log must be readable (a persistent journal, /var/log/journal) and free of machine-check / hardware-error lines.
+# "ignore": only this boot's kernel log is checked.
+previous_boot_log = "require"
+
+# Apply only the accepted state that was armed (its sha256). After "Set as accepted" in the app, arm again: sudo /usr/lib/linux-xtu/linux-xtu-restore arm
+bind_accepted = true
+
+# Seconds of running time to wait for a busy helper (the desktop app is connected) or a mailbox lock before skipping this boot (0..3600). Such a skip
+# sends nothing and does not disarm: the next boot tries again.
+busy_wait_s = 300

@@ -1,0 +1,766 @@
+"""``vf.measure`` / ``curves.*`` / ``mem.read`` through a real helper on pipes, over a fake cpufreq sysfs and the SimModel (no hardware, no process, no sleeping)."""
+from __future__ import annotations
+
+import time
+import threading
+import unittest
+
+from linux_xtu import vfdump
+from linux_xtu.helper.ops_measure import CAP_ATTR, EPP_ATTR, MIN_ATTR, TURBO_OFF_NOTE, SimModel, _capped, cpu_ranges, interpolate_points
+from linux_xtu.helper.protocol import MAX_LINE, encode
+
+from ._measure_support import MeasureCase, reference_read
+from ._support import error_code
+
+
+def points(record: dict, unit: str) -> dict[int, dict]:
+    return {p["ratio"]: p for p in record["units"][unit]["points"]}
+
+
+class QuickRunTests(MeasureCase):
+    def test_a_quick_run_of_all_twelve_units(self) -> None:
+        h = self.start_measure(kept_read=True)
+        reply = h.call("m", "vf.measure", {"mode": "quick"}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        rec = reply["result"]["record"]
+        self.assertEqual(reply["result"]["curve_id"], rec["id"])
+        self.assertEqual((rec["mode"], rec["complete"], rec["kernel"], rec["baseline"]), ("quick", True, "6.99-test", False))
+        self.assertEqual((rec["plan"], reply["result"]["plan"]), ("kept read", "kept read"))  # the ratios are the unit's own points from this boot's read
+        self.assertEqual(rec["tuning_state"], {"kind": "stock"})  # a complete read of neutral words, nothing written this boot
+        self.assertEqual(list(rec["units"]), [f"P{n}" for n in range(8)] + [f"EC{n}" for n in range(4)])
+        self.assertEqual(rec["units"]["EC2"]["cpus"], [16, 17, 18, 19])
+        self.assertEqual([p["ratio"] for p in rec["units"]["P1"]["points"]], [8, 20, 30, 48, 53, 55, 56, 57])
+        self.assertEqual([p["ratio"] for p in rec["units"]["EC0"]["points"]], [8, 15, 23, 30, 40, 46, 47, 48])  # F9: + the max turbo bins
+        self.assertEqual(set(rec["units"]["P0"]["points"][0]), {"ratio", "mhz", "vid_v", "vid_min", "vid_max", "kept", "total", "status", "fused_point"})  # no reason on an ok point; fused point 1 = 8x
+        # 56x / 57x: reachable on the favored P0 and P3 only
+        for unit in ("P0", "P3"):
+            self.assertEqual({r: points(rec, unit)[r]["status"] for r in (55, 56, 57)}, {55: "ok", 56: "ok", 57: "ok"})
+        for unit in ("P1", "P2", "P4", "P5", "P6", "P7"):
+            self.assertEqual({r: points(rec, unit)[r]["status"] for r in (55, 56, 57)}, {55: "ok", 56: "unreachable", 57: "unreachable"})
+            self.assertIsNone(points(rec, unit)[57]["vid_v"])
+            self.assertEqual({r: points(rec, unit)[r]["reason"] for r in (56, 57)}, {56: "max_turbo", 57: "max_turbo"})  # cpuinfo_max_freq 5.5 GHz
+        p0 = points(rec, "P0")
+        self.assertAlmostEqual(p0[8]["vid_v"], 0.70, delta=0.04)
+        self.assertAlmostEqual(p0[57]["vid_v"], 1.40, delta=0.04)
+        self.assertTrue(p0[8]["vid_v"] < p0[30]["vid_v"] < p0[48]["vid_v"] < p0[57]["vid_v"])
+        self.assertAlmostEqual(points(rec, "EC1")[46]["vid_v"], 1.15, delta=0.04)
+        self.assertEqual(p0[30]["mhz"], 3000)
+        self.assertTrue(p0[30]["vid_min"] <= p0[30]["vid_v"] <= p0[30]["vid_max"])
+        self.assertTrue(5 <= p0[30]["kept"] <= p0[30]["total"] == 10)
+        self.assertLess(rec["temps"]["min_c"], rec["temps"]["max_c"])
+        # per-core spread: the units do not share one curve
+        self.assertGreater(len({points(rec, f"P{n}")[48]["vid_v"] for n in range(8)}), 4)
+        self.assertTrue(all(abs(points(rec, f"P{n}")[48]["vid_v"] - p0[48]["vid_v"]) < 0.06 for n in range(8)))
+        # stored, and nothing left behind
+        self.assertEqual(self.store.get(rec["id"]), rec)
+        self.assert_cpufreq_pristine()
+        self.assertEqual(self.closed, 1)
+
+    def test_without_a_kept_read_the_quick_plan_is_generic(self) -> None:
+        rec = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P1", "EC0"]}, timeout=60)["result"]["record"]
+        self.assertEqual(rec["plan"], "generic")
+        self.assertEqual(rec["tuning_state"], {"kind": "unknown"})
+        self.assertEqual([p["ratio"] for p in rec["units"]["P1"]["points"]], [8, 13, 18, 23, 28, 33, 38, 43, 48, 53, 55])  # every 5th ratio from 8, plus the unit's max
+        self.assertEqual([p["ratio"] for p in rec["units"]["EC0"]["points"]], [8, 13, 18, 23, 28, 33, 38, 43, 48])
+        self.assertTrue(all("fused_point" not in p for p in rec["units"]["P1"]["points"]))  # no read, no point labels
+
+    def test_default_curve_name_is_local_time_while_created_stays_utc(self) -> None:
+        # QA-34: the UI shows local time everywhere, so the default name must not be a UTC stamp. TZ UTC+5 makes the two differ at any hour.
+        import calendar
+        import os
+        old = os.environ.get("TZ")
+        os.environ["TZ"] = "Etc/GMT-5"
+        time.tzset()
+        try:
+            rec = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P1"]}, timeout=60)["result"]["record"]
+            epoch = calendar.timegm(time.strptime(rec["created"], "%Y-%m-%dT%H:%M:%SZ"))
+            local = time.strftime("%Y-%m-%d %H:%M", time.localtime(epoch))
+            self.assertEqual(rec["name"], f"Quick {local}")
+            self.assertTrue(rec["created"].endswith("Z"), "the stored stamp stays UTC")
+            self.assertNotEqual(rec["name"], "Quick " + rec["created"][:16].replace("T", " "))
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            time.tzset()
+
+    def test_events_progress_and_state(self) -> None:
+        h = self.start_measure(kept_read=True)
+        reply = h.call("m", "vf.measure", {"mode": "quick", "units": ["EC3", "P2"], "name": "mine"}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual(reply["result"]["record"]["name"], "mine")
+        self.assertEqual(list(reply["result"]["record"]["units"]), ["P2", "EC3"])  # display order, not request order
+        pts = [m for m in h.messages if m.get("event") == "vf.point"]
+        self.assertEqual(len(pts), 8 + 8 + 1)  # + the cap search that finds EC3's 23x (G-131), reported as a retry
+        self.assertEqual([m["ratio"] for m in pts if m.get("retry")], [23])
+        self.assertEqual(set(pts[0]), {"event", "op_id", "unit", "ratio", "mhz", "vid_v", "status"})
+        self.assertEqual((pts[0]["op_id"], pts[0]["unit"], pts[0]["ratio"], pts[0]["mhz"]), ("m", "P2", 8, 800))
+        prog = [m for m in h.messages if m.get("event") == "progress" and m.get("op_id") == "m"]
+        self.assertEqual((prog[0]["step"], prog[0]["of"]), (0, 16))
+        self.assertEqual((prog[-1]["step"], prog[-1]["of"], prog[-1]["unit"], prog[-1]["ratio"]), (17, 17, "EC3", 23))
+        self.assertEqual(set(prog[-1]), {"event", "op_id", "step", "of", "unit", "ratio", "eta_s"})
+        self.assertEqual(prog[-1]["eta_s"], 0)
+        self.assertGreaterEqual(prog[0]["eta_s"], 1)
+        # the state events arrive on the connection's reader alongside the answer: wait for the transition back to idle (bounded) instead of racing it under suite load
+        deadline = time.monotonic() + 3.0
+        states = [m["state"] for m in h.messages if m.get("event") == "state"]
+        while states[:2] != ["measuring", "idle"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+            states = [m["state"] for m in h.messages if m.get("event") == "state"]
+        self.assertEqual(states[:2], ["measuring", "idle"])
+
+    def test_dense_covers_every_ratio_up_to_the_unit_maximum(self) -> None:
+        h = self.start_measure()
+        rec = h.call("m", "vf.measure", {"mode": "dense", "units": ["P0", "P1", "EC0"]}, timeout=60)["result"]["record"]
+        self.assertEqual([p["ratio"] for p in rec["units"]["P0"]["points"]], list(range(8, 58)))
+        self.assertEqual([p["ratio"] for p in rec["units"]["EC0"]["points"]], list(range(8, 49)))
+        self.assertEqual({points(rec, "P0")[r]["status"] for r in range(8, 58) if r != 52}, {"ok"})
+        self.assertEqual(self.io.read_max_khz(8), 4_900_000)  # cpuinfo_max_freq of an E-core says 49x ...
+        self.assertEqual(max(points(rec, "EC0")), 48)  # ... G-118: the 0x650 table says 48, so 49x is never offered
+        self.assertEqual(max(points(rec, "P1")), 55)  # dense stops at the unit maximum (cpuinfo_max_freq 5.5 GHz): nothing above is tried
+        self.assertEqual(points(rec, "P1")[52]["reason"], "cap_granularity")  # F9: P 52x is not pinnable
+
+    def test_unpinnable_ratios_are_unreachable_with_a_granularity_reason(self) -> None:
+        """F9 / G-131: E 29x and P 52x never land on the target with any cap (the cap search tries and finds nothing): unreachable, not an error and not a mismatch. E 23x is
+        only missed by the two 100 MHz caps; the cap search finds it (next test)."""
+        rec = self.start_measure().call("m", "vf.measure", {"mode": "dense", "units": ["EC0", "P4"]}, timeout=60)["result"]["record"]
+        e = points(rec, "EC0")[29]
+        self.assertEqual((e["status"], e["reason"], e["vid_v"], e.get("retried")), ("unreachable", "cap_granularity", None, True))
+        self.assertLessEqual(e["kept"], 2)
+        self.assertTrue(e["neighbours"][0] < 29 < e["neighbours"][1], e)  # G-132: the ratios the caps did run, for "the nearest are A and B"
+        self.assertNotIn("cap_khz", e)
+        self.assertEqual(points(rec, "EC0")[24]["status"], "ok")
+        self.assertEqual(points(rec, "EC0")[22]["status"], "ok")
+        self.assertEqual((points(rec, "P4")[52]["status"], points(rec, "P4")[52]["reason"]), ("unreachable", "cap_granularity"))
+        self.assertEqual(points(rec, "P4")[52]["neighbours"], [51, 53])
+        self.assertEqual(points(rec, "P4")[53]["status"], "ok")
+        self.assert_cpufreq_pristine()
+
+    def test_the_cap_search_finds_e_23x_and_records_the_cap(self) -> None:
+        """G-131: the kernel converts an E cap to HWP perf units (perf = round(khz / scale)); 2300 and 2400 MHz both miss 23x, a cap between them runs it."""
+        rec = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "quick", "units": ["EC0", "EC3"]}, timeout=60)["result"]["record"]
+        for unit in ("EC0", "EC3"):
+            p = points(rec, unit)[23]
+            self.assertEqual((p["status"], p.get("reason"), p["retried"], p["fused_point"]), ("ok", None, True, 3), unit)
+            self.assertIsNotNone(p["vid_v"])
+            self.assertGreaterEqual(p["kept"], 5)
+            self.assertTrue(2_300_000 < p["cap_khz"] < 2_400_000, p["cap_khz"])  # the cap that ran 23x, between the two neighbours
+            self.assertEqual(self.model.settled(unit, p["cap_khz"]), 23)
+            self.assertNotIn("cap_khz", points(rec, unit)[30])  # only a found cap is recorded
+        self.assertAlmostEqual(points(rec, "EC0")[23]["vid_v"], 0.775, delta=0.01)  # the E VID floor
+        self.assert_cpufreq_pristine()  # the search restored every cap
+
+    def test_the_cap_search_model_rounds_to_perf_steps(self) -> None:
+        m = SimModel()
+        self.assertEqual((m.settled("EC0", 2_300_000), m.settled("EC0", 2_400_000), m.settled("EC0", 2_350_000)), (22, 24, 23))
+        self.assertEqual([m.settled("EC0", c * 100_000) for c in (8, 30, 40, 46, 48)], [8, 30, 40, 46, 48])  # nominal caps are unchanged by the rounding
+        q = m.e_cap_quantized(2_350_000)
+        self.assertEqual((m.e_cap_quantized(q), m.e_cap_quantized(4_900_000)), (q, 4_900_000))  # idempotent, the maximum is a whole step
+        self.assertEqual(m.settled("P4", 5_250_000), 51)  # P cores are not rounded: P 52x stays unpinnable
+
+    def test_search_cap_samples_each_read_back_once_and_restores(self) -> None:
+        """The read-back decides: caps the kernel rounds to the same step are sampled once. 29x has no perf step: nothing found, nothing left changed."""
+        from linux_xtu.vfdump import MeasureGroup, search_cap
+
+        caps: list[int] = []
+        self.perf_hook = lambda cpu: caps.append(int(self.cpufreq.read(cpu, CAP_ATTR)))
+        group = MeasureGroup("EC0", "E", (12, 13, 14, 15), 12, (29,), ())
+        problems: list[str] = []
+        got = search_cap(self.io, group, 29, self.read_perf, lambda s: None, problems, settle_s=0.0, samples=5, interval_s=0.0, min_valid=3)
+        self.assertIsNone(got)
+        self.assertEqual(problems, [])
+        steps = sorted(set(caps))
+        self.assertEqual(len(caps), 5 * len(steps))  # every distinct step sampled exactly once (5 samples each)
+        self.assertTrue(len(steps) >= 2 and all(2_700_000 < c < 3_100_000 for c in steps) and not {self.model.e_cap_quantized(2_900_000), self.model.e_cap_quantized(3_000_000)} & set(steps), steps)  # never the nominal steps again
+        self.assertEqual({self.read(c, CAP_ATTR) for c in (12, 13, 14, 15)}, {str(self.model.max_khz(12))})  # restored
+
+    def test_classify_keeps_a_rarely_hit_target_a_mismatch(self) -> None:
+        from linux_xtu.helper.ops_measure import _classify
+
+        hover = vfdump.RatioMeasurement(30, "MISMATCH", 3_000_000, seen_ratios=(29, 30), samples_kept=4, samples_total=10, why="above")
+        self.assertEqual(_classify(hover, 46, ()), ("mismatch", None))
+        never = vfdump.RatioMeasurement(30, "MISMATCH", 3_000_000, seen_ratios=(29, 31), samples_kept=0, samples_total=10, why="above")
+        self.assertEqual(_classify(never, 46, ()), ("unreachable", "cap_granularity"))
+        self.assertEqual(_classify(vfdump.RatioMeasurement(57, "skipped", why="below"), 55, ()), ("unreachable", "max_turbo"))
+        self.assertEqual(_classify(vfdump.RatioMeasurement(48, "skipped", why="user_cap"), 55, ()), ("unreachable", "user_cap"))
+
+    def test_favored_57x_needs_few_active_cores_and_is_sampled_longer(self) -> None:
+        """F3 [MEASURED lnx 2026-10-11]: quiet system => P0/P3 reach 56/57x on ~70 % of the samples (ok, early stop at min_valid, kept < total); with 2+ other busy
+        cores the samples never reach it => unreachable, reason active_cores (never an error)."""
+        rec = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "quick", "units": ["P0", "P3"]}, timeout=60)["result"]["record"]
+        for unit in ("P0", "P3"):
+            for ratio in (56, 57):
+                p = points(rec, unit)[ratio]
+                self.assertEqual(p["status"], "ok", (unit, ratio, p))
+                self.assertTrue(5 <= p["kept"] <= p["total"] <= 40, p)
+                self.assertEqual(p["kept"], 5, p)  # the long sampling stops as soon as min_valid samples sit at the target
+        self.assertAlmostEqual(points(rec, "P0")[57]["vid_v"], 1.4288, delta=0.004)
+        self.assertAlmostEqual(points(rec, "P3")[57]["vid_v"], 1.3964, delta=0.004)
+        self.assertEqual(points(rec, "P0")[55]["total"], 10)  # the ordinary points keep 10 samples
+
+    def test_favored_57x_with_two_other_busy_cores_is_unreachable_for_active_cores(self) -> None:
+        self.model.background_busy = 2  # a desktop session keeps two more cores awake
+        rec = self.start_measure(kept_read=True).call("m2", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)["result"]["record"]
+        for ratio in (56, 57):
+            p = points(rec, "P0")[ratio]
+            self.assertEqual((p["status"], p["reason"], p["vid_v"], p["total"]), ("unreachable", "active_cores", None, 40), p)
+        self.assertEqual(points(rec, "P0")[55]["status"], "ok")
+
+    def test_max_ratio_comes_from_the_turbo_tables_not_cpuinfo(self) -> None:
+        # a lowered 0x650 table caps the E units; a failed table read falls back to cpuinfo_max_freq (49x) with a note
+        self.io.read_msr = lambda cpu, msr: 0x2E2E2E2E2E2E2E2E if msr == 0x650 else 0x3737373737373737  # type: ignore[method-assign]
+        h = self.start_measure()
+        rec = h.call("m", "vf.measure", {"mode": "dense", "units": ["P1", "EC0"]}, timeout=60)["result"]["record"]
+        self.assertEqual((max(points(rec, "EC0")), max(points(rec, "P1"))), (46, 55))
+
+        def broken(cpu: int, msr: int) -> int:
+            raise OSError(5, "no msr")
+
+        self.io.read_msr = broken  # type: ignore[method-assign]
+        reply = h.call("m2", "vf.measure", {"mode": "dense", "units": ["EC0"]}, timeout=60)["result"]
+        self.assertEqual(max(points(reply["record"], "EC0")), 49)
+        self.assertTrue(any("turbo tables" in p for p in reply["problems"]), reply["problems"])
+
+    def test_p_max_is_the_favored_ratio_of_the_last_tune_read(self) -> None:
+        from types import SimpleNamespace
+
+        h = self.start_measure()
+        h.helper._tune_state = SimpleNamespace(lock=threading.Lock(), turbo={"favored": {1: 53}}, tables=None)
+        rec = h.call("m", "vf.measure", {"mode": "dense", "units": ["P1", "P0"]}, timeout=60)["result"]["record"]
+        self.assertEqual((max(points(rec, "P1")), max(points(rec, "P0"))), (53, 57))  # P0 has no entry: cpuinfo_max_freq 5.7 GHz
+
+    def test_a_point_that_missed_is_measured_once_more_and_the_better_attempt_is_kept(self) -> None:
+        from unittest import mock
+
+        calls: list[int] = []
+        real = vfdump.measure_group
+
+        def spy(*args, **kwargs):  # first call = the whole unit, later calls = the retry pass; the desktop session goes quiet before the retry
+            calls.append(len(args[1].ratios))
+            if len(calls) == 2:
+                self.model.background_busy = 0
+            return real(*args, **kwargs)
+
+        self.model.background_busy = 2
+        h = self.start_measure(kept_read=True)
+        with mock.patch.object(vfdump, "measure_group", spy):
+            reply = h.call("m", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        rec = reply["result"]["record"]
+        self.assertEqual(calls, [8, 1, 1])  # 56x and 57x retried singly
+        for ratio in (56, 57):
+            p = points(rec, "P0")[ratio]
+            self.assertEqual((p["status"], p["retried"]), ("ok", True), p)
+            self.assertTrue(5 <= p["kept"] <= p["total"], p)  # kept / total are the retry's own
+        self.assertNotIn("retried", points(rec, "P0")[55])
+        self.assertEqual([(e["ratio"], e["status"]) for e in h.events("vf.point") if e.get("retry")], [(56, "ok"), (57, "ok")])
+        last = [e for e in h.events("progress") if e["op_id"] == "m"][-1]
+        self.assertEqual((last["step"], last["of"]), (10, 10))
+
+    def test_a_retry_that_misses_again_leaves_the_first_result(self) -> None:
+        self.model.background_busy = 2
+        h = self.start_measure(kept_read=True)
+        rec = h.call("m", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)["result"]["record"]
+        for ratio in (56, 57):
+            p = points(rec, "P0")[ratio]
+            self.assertEqual((p["status"], p["reason"], p["retried"]), ("unreachable", "active_cores", True))
+        self.assertEqual([e for e in h.events("vf.point") if e.get("retry")], [])
+
+    def test_baseline_flag_marks_a_complete_record_and_moves(self) -> None:
+        h = self.start_measure()
+        first = h.call("a", "vf.measure", {"mode": "quick", "units": ["EC0"], "baseline": True}, timeout=60)["result"]["record"]
+        self.assertTrue(first["baseline"])
+        plain = h.call("b", "vf.measure", {"mode": "quick", "units": ["EC0"]}, timeout=60)["result"]["record"]
+        self.assertFalse(plain["baseline"])
+        self.assertTrue(self.store.get(first["id"])["baseline"])  # an ordinary run leaves the baseline alone
+        second = h.call("c", "vf.measure", {"mode": "quick", "units": ["EC0"], "baseline": True}, timeout=60)["result"]["record"]
+        self.assertTrue(second["baseline"])
+        self.assertFalse(self.store.get(first["id"])["baseline"])
+        self.assertEqual([c["id"] for c in self.store.summaries() if c["baseline"]], [second["id"]])
+        self.assertEqual(error_code(h.call("d", "vf.measure", {"baseline": "yes"})), "BAD_REQUEST")
+
+    def test_stock_tuning_state_needs_a_complete_read_with_all_offsets_zero(self) -> None:
+        zero, fused = reference_read()  # the OC words of a cold boot (neutral: no OC point) and every point at offset 0
+        h = self.start_measure(last_words=zero, fused_words=fused)
+        rec = h.call("s", "vf.measure", {"mode": "quick", "units": ["EC0"]}, timeout=60)["result"]["record"]
+        self.assertEqual(rec["tuning_state"], {"kind": "stock"})
+        h.helper.last_words = {**zero, 9: [zero[9][0], zero[9][1] | (0x7F0 << 21)]}  # a raw offset on one point of a non-first E CPU
+        rec = h.call("t", "vf.measure", {"mode": "quick", "units": ["EC0"]}, timeout=60)["result"]["record"]
+        self.assertEqual(rec["tuning_state"]["kind"], "words")
+        h.helper.last_words = {cpu: ws for cpu, ws in zero.items() if cpu < 8}  # P-cores only: not a complete read
+        rec = h.call("u", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)["result"]["record"]
+        self.assertEqual(rec["tuning_state"]["kind"], "words")
+        h.helper.last_words = dict(zero)
+        h.helper.fused_words = {}  # the 0x09 words were not read: neutral cannot be proven
+        rec = h.call("v", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)["result"]["record"]
+        self.assertEqual(rec["tuning_state"]["kind"], "words")
+
+    def test_a_raised_oc_word_or_any_apply_this_boot_is_not_stock(self) -> None:
+        """G-120 fix 4: offsets all 0 is not enough; the OC words must carry no OC point (live 0x09 top ratio) and nothing may have been applied."""
+        zero, fused = reference_read()
+        h = self.start_measure(last_words=zero, fused_words=fused)
+        run = lambda tag: h.call(tag, "vf.measure", {"mode": "quick", "units": ["EC0"]}, timeout=60)["result"]["record"]["tuning_state"]["kind"]
+        self.assertEqual(run("a"), "stock")
+        h.helper.last_words = {**zero, 12: [0x00048C30, *zero[12][1:]]}  # EC1's OC point (ratio 48 above its top fused ratio, adaptive 1.1367 V): offset 0 but not stock
+        self.assertEqual(run("b"), "words")
+        h.helper.last_words = {**zero, 0: [0x0005B439, *zero[0][1:]]}  # P0 in the XTU shape: a V target next to the ratio is not the cold word
+        self.assertEqual(run("c"), "words")
+        h.helper.last_words = {**zero, 3: [0x3A, *zero[3][1:]]}  # P3 with an OC ratio 58, above its top fused ratio
+        self.assertEqual(run("d"), "words")
+        h.helper.last_words = dict(zero)
+        h.helper.tuned_this_boot = True  # a tune.apply wrote this boot, even a restore
+        self.assertEqual(run("e"), "words")
+
+    def test_fused_point_labels(self) -> None:
+        rec = self.start_measure(kept_read=True).call("f", "vf.measure", {"mode": "dense", "units": ["P0", "P1", "EC0"]}, timeout=60)["result"]["record"]
+        p0, p1, ec0 = points(rec, "P0"), points(rec, "P1"), points(rec, "EC0")
+        self.assertEqual([p0[r]["fused_point"] for r in (8, 20, 30, 48, 53, 55, 56, 57)], [1, 2, 3, 4, 5, 6, 7, 8])  # P0's OC ratio 57 is also point 8: the index wins
+        self.assertNotIn("fused_point", p0[54])  # an in-between ratio carries no label
+        self.assertEqual([ec0[r]["fused_point"] for r in (8, 15, 30, 40, 46)], [1, 2, 4, 5, 6])
+        self.assertNotIn("fused_point", ec0[47])
+        self.assertEqual(ec0[48]["fused_point"], "oc")  # E max 48 is above the top fused point 46: the OC ratio
+        self.assertNotIn("fused_point", p1[54])
+        from linux_xtu.helper.ops_measure import _fused_point
+
+        p_points, e_points = (8, 20, 30, 48, 53, 55, 56, 57), (8, 15, 23, 30, 40, 46)
+        self.assertEqual((_fused_point(p_points, 58, 58), _fused_point(p_points, 58, None), _fused_point(e_points, 23, None)), ("oc", None, 3))
+
+    def test_other_units_stay_idle_while_one_is_measured(self) -> None:
+        seen: list[set[int]] = []
+        self.perf_hook = lambda cpu: seen.append(set(self.io.loaded))
+        self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P0", "EC1"]}, timeout=60)
+        self.assertTrue(all(loaded <= {0} or loaded <= {12, 13, 14, 15} for loaded in seen))
+
+    def test_the_sim_vid_is_the_stock_curve_with_the_f4_clamp(self) -> None:
+        """The model's VID = the measured stock curve; an offset at 57x deeper than the 56x voltage is clamped up to it (the measured P0 case)."""
+        m = SimModel()
+        self.assertAlmostEqual(m.vid("P0", 53), 1.216, places=4)
+        self.assertAlmostEqual(m.vid("P0", 54), (1.216 + 1.299) / 2, places=4)  # 54x has no point: the midpoint of 53x / 55x
+        self.assertAlmostEqual(m.vid("EC0", 48), 1.157, places=4)  # E 47-48x run on point 6
+        m.offsets_mv["P0"] = {57: -49.8}
+        self.assertAlmostEqual(m.vid("P0", 57), 1.386, places=4)  # 1.4288 - 0.0498 = 1.379 < V(56x): clamped
+        self.assertAlmostEqual(m.vid("P0", 56), 1.386, places=4)
+
+    def test_the_run_writes_only_the_pinned_min_and_max_and_journals_first(self) -> None:
+        """G-132 (R-001): profile, governor and EPP are never written (EPP is EBUSY under performance and not needed when pinned)."""
+        self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P5", "EC1"]}, timeout=60)
+        self.assertTrue(self.cpufreq.journal_existed_at_first_write)
+        self.assertEqual({attr for _, attr, _ in self.cpufreq.writes}, {CAP_ATTR, MIN_ATTR})
+        self.assertEqual({cpu for cpu, _, _ in self.cpufreq.writes}, {5, 12, 13, 14, 15})  # only the selected units' CPUs
+        self.assert_cpufreq_pristine()
+
+    def test_tuning_state_comes_from_the_words_read_this_session(self) -> None:
+        h = self.start_measure(last_words={0: [0x1, 0xDEADBEEF], 3: [0x2]})
+        rec = h.call("m", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)["result"]["record"]
+        self.assertEqual(rec["tuning_state"], {"kind": "words", "words": {"0": ["0x00000001", "0xdeadbeef"], "3": ["0x00000002"]}})
+
+    def test_arguments_are_validated(self) -> None:
+        h = self.start_measure()
+        for n, args in enumerate((
+            {"mode": "slow"}, {"units": []}, {"units": ["P0", "P0"]}, {"units": ["P9"]}, {"units": "P0"}, {"name": ""}, {"name": "x" * 65}, {"name": "a\nb"}, {"x": 1}, {"baseline": 1},
+        )):
+            self.assertEqual(error_code(h.call(f"b{n}", "vf.measure", args)), "BAD_REQUEST", args)
+        self.assertEqual(h.helper.machine.state.value, "idle")
+
+    def test_it_is_a_long_exclusive_op_but_not_write_gated(self) -> None:
+        gate, entered = threading.Event(), threading.Event()
+
+        def hook(_s: float) -> None:
+            entered.set()
+            gate.wait(10)
+
+        self.sleep_hook = hook
+        h = self.start_measure()
+        h.send({"id": "m", "op": "vf.measure", "args": {"mode": "quick", "units": ["P0"]}})
+        self.assertTrue(entered.wait(10))
+        self.assertEqual(error_code(h.call("d", "vf.dump", {"cpus": "0"})), "BUSY")
+        self.assertEqual(error_code(h.call("m2", "vf.measure", {})), "BUSY")
+        self.assertEqual(h.call("l", "curves.list")["result"], {"curves": [], "no_turbo": False})  # read-only ops stay available
+        self.assertTrue(h.call("p", "preflight")["ok"])
+        self.assertEqual(h.helper.machine.state.value, "measuring")
+        gate.set()
+        self.assertTrue(h.response("m", 30)["ok"])
+
+    def test_no_wiring_is_an_internal_error(self) -> None:
+        h = self.start()
+        self.assertEqual(error_code(h.call("m", "vf.measure", {})), "INTERNAL")
+        self.assertEqual(error_code(h.call("c", "curves.list")), "INTERNAL")
+        self.assertEqual(h.helper.machine.state.value, "idle")
+
+
+class PathsOutTests(MeasureCase):
+    def test_cancel_stores_the_partial_and_restores(self) -> None:
+        calls = {"n": 0}
+        gate, reached = threading.Event(), threading.Event()
+
+        def hook(_s: float) -> None:
+            calls["n"] += 1
+            if calls["n"] == 25:
+                reached.set()
+                gate.wait(10)
+
+        self.sleep_hook = hook
+        h = self.start_measure()
+        h.send({"id": "m", "op": "vf.measure", "args": {"mode": "quick", "name": "cut"}})
+        self.assertTrue(reached.wait(10))
+        self.assertTrue(self.journal.exists())
+        self.assertTrue(self.io.loaded)  # a load is in force right now
+        self.assertTrue(h.call("c", "cancel", {"op_id": "m"})["result"]["cancelled"])
+        gate.set()
+        reply = h.response("m", 30)
+        self.assertEqual(error_code(reply), "CANCELLED")
+        curve_id = reply["error"]["detail"]["curve_id"]
+        partial = reply["error"]["detail"]["partial"]
+        self.assertEqual(partial["id"], curve_id)
+        self.assertFalse(partial["complete"])
+        stored = self.store.get(curve_id)
+        self.assertEqual(stored, partial)
+        done = sum(len(u["points"]) for u in stored["units"].values())
+        self.assertTrue(0 < done < 88, done)
+        self.assertEqual(len([m for m in h.messages if m.get("event") == "vf.point"]), done)  # a point cut in half is not reported
+        self.assert_cpufreq_pristine()
+        self.assertEqual(self.closed, 1)
+        self.assertEqual(h.helper.machine.state.value, "idle")
+
+    def test_cancel_before_any_point_stores_nothing(self) -> None:
+        gate, reached = threading.Event(), threading.Event()
+
+        def hook(_s: float) -> None:
+            reached.set()
+            gate.wait(10)
+
+        self.sleep_hook = hook
+        h = self.start_measure()
+        h.send({"id": "m", "op": "vf.measure", "args": {"units": ["P0"]}})
+        self.assertTrue(reached.wait(10))
+        h.call("c", "cancel")
+        gate.set()
+        reply = h.response("m", 30)
+        self.assertEqual(error_code(reply), "CANCELLED")
+        self.assertNotIn("curve_id", reply["error"].get("detail", {}))
+        self.assertEqual(self.store.summaries(), [])
+        self.assert_cpufreq_pristine()
+
+    def test_an_exception_restores_and_keeps_the_partial(self) -> None:
+        calls = {"n": 0}
+
+        def boom(_cpu: int) -> None:
+            calls["n"] += 1
+            if calls["n"] == 60:
+                raise RuntimeError("msr gone")
+
+        self.perf_hook = boom
+        reply = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P0", "P1"]}, timeout=60)
+        self.assertEqual(error_code(reply), "INTERNAL")
+        self.assertIn("msr gone", reply["error"]["message"])
+        stored = self.store.get(reply["error"]["detail"]["curve_id"])
+        self.assertFalse(stored["complete"])
+        self.assertTrue(stored["units"]["P0"]["points"])
+        self.assert_cpufreq_pristine()
+        self.assertEqual(self.closed, 1)
+
+    def test_a_restore_that_fails_is_loud_and_keeps_the_journal(self) -> None:
+        h = self.start_measure()
+        self.cpufreq.fail = lambda cpu, attr, value: attr == CAP_ATTR and value == str(self.model.max_khz(cpu))  # writing the ORIGINAL cap back fails
+        reply = h.call("m", "vf.measure", {"mode": "quick", "units": ["P0"]}, timeout=60)
+        self.assertEqual(error_code(reply), "INTERNAL")
+        self.assertIn("could NOT restore", reply["error"]["message"])
+        self.assertTrue(self.journal.exists(), "an unrestored run keeps its journal for the next start")
+        self.assertEqual(self.store.summaries()[0]["id"], reply["error"]["detail"]["curve_id"])  # the measurement itself is kept
+        self.cpufreq.fail = None  # the next helper start can finish the job
+        from linux_xtu.helper.ops_measure import recover_journal
+
+        logs: list[str] = []
+        self.assertTrue(recover_journal(self.start_measure().helper.measure_wiring, logs.append))
+        self.assert_cpufreq_pristine()
+
+    def test_unusable_cpufreq_is_refused_before_anything_changes(self) -> None:
+        for cpu in range(24):
+            (self.sysfs / f"cpu{cpu}" / "cpufreq" / CAP_ATTR).unlink()
+        reply = self.start_measure().call("m", "vf.measure", {}, timeout=30)
+        self.assertEqual((error_code(reply), reply["error"]["detail"]["check"]), ("REFUSED", "NO_CPUFREQ"))
+        self.assertEqual(self.cpufreq.writes, [])
+        self.assertFalse(self.journal.exists())
+
+    def test_dense_without_cpufreq_is_refused_too(self) -> None:
+        self.io.read_max_khz = lambda cpu: int((self.sysfs / f"cpu{cpu}" / "cpufreq" / "cpuinfo_max_freq").read_text())  # type: ignore[method-assign]
+        for cpu in range(24):
+            (self.sysfs / f"cpu{cpu}" / "cpufreq" / "cpuinfo_max_freq").unlink()
+        reply = self.start_measure().call("m", "vf.measure", {"mode": "dense"}, timeout=30)
+        self.assertEqual((error_code(reply), reply["error"]["detail"]["check"]), ("REFUSED", "NO_CPUFREQ"))
+        self.assertEqual(self.cpufreq.writes, [])
+
+    def test_a_load_generator_that_is_not_usable_is_refused(self) -> None:
+        self.io.check = lambda: "python3 is not trusted"  # type: ignore[method-assign]
+        reply = self.start_measure().call("m", "vf.measure", {}, timeout=30)
+        self.assertEqual((error_code(reply), reply["error"]["detail"]["check"]), ("REFUSED", "LOAD_GENERATOR"))
+        self.assertEqual(self.cpufreq.writes, [])
+
+
+class PinningTests(MeasureCase):
+    """G-132 (R-001 section 5): the measure op sets ``scaling_min_freq`` = ``scaling_max_freq`` = cap on the unit's CPUs, max first when raising and min first when lowering (the kernel
+    refuses ``min > max``), and puts both back. Restore failures are ONE line per attribute, with the CPUs as ranges."""
+
+    UNITS = ["P5", "EC1"]  # cpus 5, 12-15
+
+    def replay(self) -> None:
+        """Replay every cpufreq write against a kernel that answers EINVAL to min > max: no write of this run may be one."""
+        state = {cpu: [800_000, self.model.max_khz(cpu)] for cpu in range(24)}
+        for cpu, attr, value in self.cpufreq.writes:
+            mn, mx = state[cpu]
+            if attr == MIN_ATTR:
+                self.assertLessEqual(int(value), mx, f"cpu {cpu}: min {value} above max {mx}")
+                state[cpu][0] = int(value)
+            elif attr == CAP_ATTR:
+                self.assertGreaterEqual(int(value), mn, f"cpu {cpu}: max {value} below min {mn}")
+                state[cpu][1] = int(value)
+        self.assertEqual({cpu: tuple(v) for cpu, v in state.items()}, {cpu: (800_000, self.model.max_khz(cpu)) for cpu in range(24)})
+
+    def test_min_equals_max_while_a_point_is_measured_and_the_order_is_always_valid(self) -> None:
+        seen: list[tuple[str, str]] = []
+        self.perf_hook = lambda cpu: seen.append((self.read(cpu, MIN_ATTR), self.read(cpu, CAP_ATTR)))
+        reply = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": self.UNITS}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        self.assertTrue(seen and all(mn == mx for mn, mx in seen), [x for x in seen if x[0] != x[1]][:3])
+        self.assertGreater(len({mx for _, mx in seen}), 5)  # a different pin for each point
+        self.replay()
+        self.assert_cpufreq_pristine()
+
+    def test_raising_writes_max_first_and_lowering_writes_min_first(self) -> None:
+        self.start_measure().call("m", "vf.measure", {"mode": "dense", "units": ["P5"]}, timeout=60)
+        w = [(a, int(v)) for c, a, v in self.cpufreq.writes if c == 5]
+        # the first pin is 8x (800 MHz) = the idle minimum: max written lower first? no: 800000 >= min 800000 -> max, then min
+        self.assertEqual(w[:2], [(CAP_ATTR, 800_000), (MIN_ATTR, 800_000)])
+        self.assertEqual(w[2:4], [(CAP_ATTR, 900_000), (MIN_ATTR, 900_000)])  # raising
+        self.assertEqual(w[-2:], [(CAP_ATTR, self.model.max_khz(5)), (MIN_ATTR, 800_000)])  # the restore raises the max first, then lowers the min
+
+    def test_a_user_min_above_the_first_pin_is_lowered_first_and_restored(self) -> None:
+        self.cpufreq.write(5, MIN_ATTR, "3000000")
+        self.cpufreq.writes.clear()
+        reply = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P5"]}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        first = [(a, int(v)) for c, a, v in self.cpufreq.writes if c == 5][:2]
+        self.assertEqual(first, [(MIN_ATTR, 800_000), (CAP_ATTR, 800_000)])  # 800 MHz is below the user's minimum: min first
+        self.assertEqual(self.read(5, MIN_ATTR), "3000000")  # the user's own minimum is back
+        self.assertEqual(self.read(5, CAP_ATTR), str(self.model.max_khz(5)))
+
+    def test_epp_and_governor_are_never_written_whatever_they_are(self) -> None:
+        for cpu in range(24):
+            self.cpufreq.write(cpu, "scaling_governor", "performance")
+            self.cpufreq.write(cpu, EPP_ATTR, "performance")
+        self.cpufreq.writes.clear()
+        reply = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": self.UNITS}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        self.assertEqual({attr for _, attr, _ in self.cpufreq.writes}, {CAP_ATTR, MIN_ATTR})
+        self.assertNotIn("problems", reply["result"])  # no EPP note any more
+        self.assertEqual((self.read(5, EPP_ATTR), self.read(5, "scaling_governor")), ("performance", "performance"))
+
+    def test_a_restore_that_fails_the_same_way_everywhere_is_one_line(self) -> None:
+        for cpu in (5, 12, 13, 14, 15):
+            self.cpufreq.write(cpu, MIN_ATTR, "1200000")  # the user's own minimum
+        self.cpufreq.fail = lambda cpu, attr, value: attr == MIN_ATTR and value == "1200000"  # writing it back fails
+        reply = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": self.UNITS}, timeout=60)
+        self.assertEqual(error_code(reply), "INTERNAL")
+        lines = reply["error"]["detail"]["problems"]
+        restore = [x for x in lines if "could NOT restore" in x]
+        self.assertEqual(len(restore), 1, lines)
+        self.assertEqual(restore[0], "could NOT restore scaling_min_freq of cpus 5, 12\u201315 to the journaled values: OSError: injected write failure (restore it by hand)")
+        self.assertTrue(self.journal.exists(), "an unrestored run keeps its journal")
+
+    def test_cpu_ranges(self) -> None:
+        self.assertEqual(cpu_ranges([0, 1, 2, 3, 8, 12, 13, 14, 15]), "0–3, 8, 12–15")
+        self.assertEqual(cpu_ranges([5, 6]), "5, 6")
+        self.assertEqual(cpu_ranges([3, 1, 2, 1]), "1–3")
+        self.assertEqual(cpu_ranges(list(range(24))), "0–23")
+
+    def test_a_long_problem_list_says_what_it_cuts(self) -> None:
+        self.assertEqual(_capped(["a"] * 10), ["a"] * 10)
+        out = _capped([str(i) for i in range(14)])
+        self.assertEqual((len(out), out[:9], out[9]), (10, [str(i) for i in range(9)], "... and 5 more notes not shown"))
+
+
+class TurboOffTests(MeasureCase):
+    """G-132 (R-001): the power-saver profile sets ``intel_pstate/no_turbo`` = 1; nothing above the base ratio can run, so those points are not attempted."""
+
+    def test_points_above_base_are_turbo_off_not_attempted_and_the_note_comes_first(self) -> None:
+        self.set_no_turbo(True)
+        caps: list[int] = []
+        self.perf_hook = lambda cpu: caps.append(int(self.read(cpu, CAP_ATTR)))
+        rec_reply = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "quick", "units": ["P5", "EC1"]}, timeout=60)
+        self.assertTrue(rec_reply["ok"], rec_reply)
+        self.assertEqual(rec_reply["result"]["problems"][0], TURBO_OFF_NOTE)
+        rec = rec_reply["result"]["record"]
+        self.assertEqual([r for r, p in points(rec, "P5").items() if p.get("reason") == "turbo_off"], [48, 53, 55, 56, 57])  # P base 37x
+        self.assertEqual([r for r, p in points(rec, "EC1").items() if p.get("reason") == "turbo_off"], [40, 46, 47, 48])  # E base 32x
+        for unit, ratio in (("P5", 53), ("EC1", 46)):
+            p = points(rec, unit)[ratio]
+            self.assertEqual((p["status"], p["vid_v"], p["kept"], p["total"]), ("unreachable", None, 0, 0))
+        self.assertEqual({r: points(rec, "P5")[r]["status"] for r in (8, 20, 30)}, {8: "ok", 20: "ok", 30: "ok"})
+        self.assertLessEqual(max(caps), 3_700_000 + 100_000)  # nothing above base was ever asked for (a +1 bin attempt at most)
+        self.assertEqual(self.cpufreq.read(5, CAP_ATTR), str(self.model.max_khz(5)))
+        self.assertFalse(self.journal.exists())
+
+    def test_the_note_is_one_line_and_absent_when_turbo_is_on(self) -> None:
+        h = self.start_measure()
+        reply = h.call("m", "vf.measure", {"mode": "quick", "units": ["P5"]}, timeout=60)
+        self.assertNotIn("problems", reply["result"])
+        self.set_no_turbo(True)
+        again = h.call("m2", "vf.measure", {"mode": "quick", "units": ["P5"]}, timeout=60)
+        self.assertEqual(again["result"]["problems"].count(TURBO_OFF_NOTE), 1)
+
+    def test_the_base_falls_back_to_cpuinfo_max_when_there_is_no_base_frequency_file(self) -> None:
+        self.set_no_turbo(True)
+        for cpu in range(24):
+            (self.sysfs / f"cpu{cpu}" / "cpufreq" / "base_frequency").unlink()
+            (self.sysfs / f"cpu{cpu}" / "cpufreq" / "cpuinfo_max_freq").write_text("3700000\n" if cpu < 8 else "3200000\n")  # R-001: cpuinfo max = base with turbo off
+        rec = self.start_measure().call("m", "vf.measure", {"mode": "quick", "units": ["P5"]}, timeout=60)["result"]["record"]
+        self.assertTrue(all(p["status"] == "ok" for p in rec["units"]["P5"]["points"] if p["ratio"] <= 37))
+        self.assertTrue(all(p["reason"] in ("turbo_off", "max_turbo") for p in rec["units"]["P5"]["points"] if p["ratio"] > 37))
+
+    def test_curves_list_tells_the_page_before_a_run(self) -> None:
+        h = self.start_measure()
+        self.assertIs(h.call("l", "curves.list")["result"]["no_turbo"], False)
+        self.set_no_turbo(True)
+        self.assertIs(h.call("l2", "curves.list")["result"]["no_turbo"], True)
+
+
+class UserCapTests(MeasureCase):
+    def test_a_point_above_the_users_own_cap_is_user_cap_not_max_turbo(self) -> None:
+        self.cpufreq.write(2, CAP_ATTR, "4000000")
+        self.cpufreq.writes.clear()
+        rec = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "quick", "units": ["P2"]}, timeout=60)["result"]["record"]
+        p2 = points(rec, "P2")
+        self.assertEqual({r: (p2[r]["status"], p2[r].get("reason")) for r in (30, 48, 53, 55)}, {30: ("ok", None), 48: ("unreachable", "user_cap"), 53: ("unreachable", "user_cap"),
+                                                                                                  55: ("unreachable", "user_cap")})
+        self.assertEqual((self.read(2, CAP_ATTR), self.read(2, MIN_ATTR)), ("4000000", "800000"))  # the user's cap is back
+
+    def test_above_the_core_limit_stays_max_turbo(self) -> None:
+        rec = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "quick", "units": ["P2"]}, timeout=60)["result"]["record"]
+        self.assertEqual({points(rec, "P2")[r]["reason"] for r in (56, 57)}, {"max_turbo"})
+
+
+class InterpolationTests(MeasureCase):
+    """G-132 item 8: a V/F point no cap can run, between measured V/F points, gets the straight line between them (status ``interpolated``, never ``ok``)."""
+
+    def test_e_23x_is_interpolated_between_15x_and_30x_when_no_cap_runs_it(self) -> None:
+        self.model.hwp_bins = True  # the R-001 cap resolution: E 23x is reachable by no cap
+        rec = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "quick", "units": ["EC0"]}, timeout=60)["result"]["record"]
+        e = points(rec, "EC0")
+        p = e[23]
+        self.assertEqual((p["status"], p["reason"], p["fused_point"], p["from"]), ("interpolated", "cap_granularity", 3, [15, 30]))
+        self.assertEqual(p["neighbours"], [22, 24])
+        self.assertAlmostEqual(p["vid_v"], 0.775, delta=0.003)  # both neighbours sit at the E VID floor
+        self.assertTrue(min(e[15]["vid_v"], e[30]["vid_v"]) <= p["vid_v"] <= max(e[15]["vid_v"], e[30]["vid_v"]))
+        self.assertTrue(all(e[r]["status"] == "ok" for r in (8, 15, 30, 40, 46)))
+        self.assert_cpufreq_pristine()
+
+    def test_a_dense_run_interpolates_only_v_f_points(self) -> None:
+        self.model.hwp_bins = True
+        rec = self.start_measure(kept_read=True).call("m", "vf.measure", {"mode": "dense", "units": ["EC0", "P4"]}, timeout=120)["result"]["record"]
+        self.assertEqual(points(rec, "EC0")[23]["status"], "interpolated")
+        self.assertEqual(points(rec, "EC0")[29]["status"], "unreachable")  # not a V/F point: left alone (the Table view shows "unreachable")
+        self.assertEqual(points(rec, "P4")[52]["status"], "unreachable")
+
+    def test_points_above_the_reach_or_without_a_neighbour_are_not_interpolated(self) -> None:
+        pts = [
+            {"ratio": 30, "status": "ok", "vid_v": 0.80, "fused_point": 3}, {"ratio": 48, "status": "unreachable", "reason": "cap_granularity", "vid_v": None, "fused_point": 4},
+            {"ratio": 53, "status": "ok", "vid_v": 1.20, "fused_point": 5}, {"ratio": 55, "status": "ok", "vid_v": 1.30, "fused_point": 6},
+            {"ratio": 56, "status": "unreachable", "reason": "max_turbo", "vid_v": None, "fused_point": 7}, {"ratio": 57, "status": "unreachable", "reason": "max_turbo", "vid_v": None, "fused_point": 8},
+            {"ratio": 8, "status": "unreachable", "reason": "cap_granularity", "vid_v": None, "fused_point": 1},   # nothing below it
+            {"ratio": 54, "status": "unreachable", "reason": "cap_granularity", "vid_v": None},                   # not a V/F point
+        ]
+        interpolate_points(pts)
+        by = {p["ratio"]: p for p in pts}
+        self.assertEqual((by[48]["status"], by[48]["from"], by[48]["vid_v"], by[48].get("exact")), ("interpolated", [30, 53], 1.113, None))  # 0.80 + 0.40 x 18/23
+        self.assertEqual([by[r]["status"] for r in (8, 54, 56, 57)], ["unreachable"] * 4)
+
+    def test_equal_neighbours_are_exact_and_the_value_stays_inside_them(self) -> None:
+        pts = [{"ratio": 15, "status": "ok", "vid_v": 0.775, "fused_point": 2}, {"ratio": 23, "status": "unreachable", "reason": "cap_granularity", "vid_v": None, "fused_point": 3},
+               {"ratio": 30, "status": "ok", "vid_v": 0.775, "fused_point": 4}]
+        interpolate_points(pts)
+        self.assertEqual((pts[1]["status"], pts[1]["vid_v"], pts[1]["exact"]), ("interpolated", 0.775, True))
+
+
+class CurvesOpsTests(MeasureCase):
+    def run_one(self, h, rid: str, **args) -> dict:
+        reply = h.call(rid, "vf.measure", {"mode": "quick", "units": ["P0", "EC0"], **args}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        return reply["result"]["record"]
+
+    def test_list_get_update_delete(self) -> None:
+        h = self.start_measure()
+        a = self.run_one(h, "m1", name="first")
+        b = self.run_one(h, "m2", name="second")
+        listing = h.call("l", "curves.list")["result"]["curves"]
+        self.assertEqual({r["id"] for r in listing}, {a["id"], b["id"]})
+        self.assertEqual(listing, sorted(listing, key=lambda r: r["id"], reverse=True))  # newest first
+        row = next(r for r in listing if r["id"] == a["id"])
+        self.assertEqual(row, {"id": a["id"], "name": "first", "created": a["created"], "mode": "quick", "complete": True, "tuning_state": {"kind": "unknown"},
+                               "units": ["P0", "EC0"], "baseline": False})
+        self.assertEqual(h.call("g", "curves.get", {"id": a["id"]})["result"], a)
+        only = h.call("g2", "curves.get", {"id": a["id"], "units": ["EC0"]})["result"]
+        self.assertEqual(list(only["units"]), ["EC0"])
+        up = h.call("u", "curves.update", {"id": a["id"], "name": "  renamed  "})["result"]
+        self.assertEqual((up["name"], up["baseline"]), ("renamed", False))
+        h.call("u2", "curves.update", {"id": a["id"], "baseline": True})
+        h.call("u3", "curves.update", {"id": b["id"], "baseline": True})  # one baseline at most: it moves
+        rows = {r["id"]: r["baseline"] for r in h.call("l2", "curves.list")["result"]["curves"]}
+        self.assertEqual(rows, {a["id"]: False, b["id"]: True})
+        self.assertEqual(h.call("d", "curves.delete", {"id": a["id"]})["result"], {"deleted": a["id"]})
+        self.assertEqual([r["id"] for r in h.call("l3", "curves.list")["result"]["curves"]], [b["id"]])
+        self.assertEqual(error_code(h.call("d2", "curves.delete", {"id": a["id"]})), "BAD_REQUEST")
+        self.assertEqual(error_code(h.call("g3", "curves.get", {"id": a["id"]})), "BAD_REQUEST")
+
+    def test_argument_validation(self) -> None:
+        h = self.start_measure()
+        bad = [("curves.get", {}), ("curves.get", {"id": "../../etc/passwd"}), ("curves.get", {"id": "x", "units": []}), ("curves.get", {"id": "x", "units": ["Q1"]}),
+               ("curves.update", {"id": "20260101T000000Z-abcd"}), ("curves.update", {"id": "20260101T000000Z-abcd", "baseline": 1}),
+               ("curves.update", {"id": "20260101T000000Z-abcd", "name": ""}), ("curves.delete", {}), ("curves.list", {"x": 1}), ("mem.read", {"x": 1})]
+        for n, (op, args) in enumerate(bad):
+            self.assertEqual(error_code(h.call(f"v{n}", op, args)), "BAD_REQUEST", (op, args))
+        self.assertEqual(error_code(h.call("n1", "curves.get", {"id": "20260101T000000Z-abcd"})), "BAD_REQUEST")  # well-formed but absent
+        self.assertEqual(error_code(h.call("n2", "curves.get", {"id": "x"})), "BAD_REQUEST")  # not an id
+
+    def test_a_dense_record_of_all_units_fits_the_line(self) -> None:
+        """The 64 KiB line cap of contract 8: the worst realistic record (dense, 12 units, plus the tuning words of 24 CPUs a ``tune.read`` leaves in ``tuning_state``)
+        must travel in one response, whole; anything bigger would be cut by whole units with ``omitted_units``."""
+        h = self.start_measure(last_words={cpu: [0x12345678] * 9 for cpu in range(24)})
+        reply = h.call("m", "vf.measure", {"mode": "dense"}, timeout=120)
+        self.assertTrue(reply["ok"], reply)
+        n_points = sum(len(u["points"]) for u in self.store.get(reply["result"]["curve_id"])["units"].values())
+        self.assertEqual(n_points, 2 * 50 + 6 * 48 + 4 * 41)
+        self.assertLessEqual(len(encode(reply)), MAX_LINE)  # encode() raises when it would not fit
+        self.assertNotIn("omitted_units", reply["result"]["record"], "a dense run of all 12 units should still fit one line")
+        got = h.call("g", "curves.get", {"id": reply["result"]["curve_id"]})
+        self.assertTrue(got["ok"], got)
+        record = got["result"]
+        shown = sum(len(u["points"]) for u in record["units"].values())
+        self.assertEqual(shown + sum(len(self.store.get(record["id"])["units"][u]["points"]) for u in record.get("omitted_units", [])), n_points)
+        for u in record.get("omitted_units", []):  # the rest is one curves.get {units} away
+            more = h.call(f"g-{u}", "curves.get", {"id": record["id"], "units": [u]})
+            self.assertTrue(more["ok"] and u in more["result"]["units"])
+
+
+class MemOpTests(MeasureCase):
+    def test_mem_read_returns_the_wired_reader(self) -> None:
+        r = self.start_measure(self.wiring(mem_fn=lambda: {"available": False, "reason": "no"})).call("m", "mem.read")
+        self.assertEqual(r["result"], {"available": False, "reason": "no"})
+
+    def test_sim_fixture(self) -> None:
+        r = self.start_measure().call("m", "mem.read")["result"]
+        self.assertEqual((r["available"], r["mts"], r["gear"], r["cmd_rate"], r["timings"]["tCL"], r["timings"]["tRFC"]), (True, 7200, 2, "2T", 36, 574))
+        self.assertEqual(len(r["dimms"]), 2)
+
+    def test_mem_read_and_curves_are_not_write_gated(self) -> None:
+        from ._support import UNKNOWN_REPORT
+
+        h = self.start_measure(self.wiring())
+        h.helper.cfg.simulator = False  # a hardware-style helper: write ops would need a fresh preflight in mode write
+        h.helper.cfg.preflight_fn = lambda: UNKNOWN_REPORT
+        self.assertTrue(h.call("m", "mem.read")["ok"])
+        self.assertTrue(h.call("c", "curves.list")["ok"])
+
+
+if __name__ == "__main__":
+    unittest.main()

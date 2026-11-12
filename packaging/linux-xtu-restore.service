@@ -1,0 +1,51 @@
+# linux-xtu: packaged unit (install.sh replaces it on upgrade; a file without this line is not ours and is never overwritten without --replace-boot-restore)
+# linux-xtu-restore.service - the UNATTENDED boot restore of the accepted state (D-053 item 3, which signs D-021 for this form only; SPEC 10).
+# Started only by linux-xtu-restore.timer (no [Install] here); the timer is disabled by default (install.sh --enable-boot-restore enables it and arms it).
+# It runs the INSTALLED, root-owned launcher only: /usr/lib/linux-xtu/linux-xtu-restore (linux_xtu.bootrestore). That code applies /etc/linux-xtu/accepted through
+# the root helper's own guarded plan/apply path in this process (one mailbox transaction at a time, read-back of every write, audit operator
+# "boot-restore:unattended"), reads every word back and compares, then stays until the boot counts as healthy (healthy_uptime_s of running time in
+# /etc/linux-xtu/restore.toml) or a stop while the system shuts down, and writes the clean marker (/var/lib/linux-xtu/bootrestore.json) if the kernel log
+# shows no machine check and no kernel fault after the apply. A boot that ends before the marker (hang, crash, power loss, a stop that is not a shutdown),
+# a machine-check line, a changed accepted state or CPU ... make the next run SKIP and DISARM itself (a busy helper is waited for, then skipped, not disarmed)
+# until root runs "/usr/lib/linux-xtu/linux-xtu-restore arm". Exit 0 applied / in place; 2 refused or failed; 3 skipped: the unit then shows as failed.
+# Kill switch without a shell: boot once with linux-xtu.norestore on the kernel command line (the run skips and disarms).
+#
+# Hardening (each checked against what the run needs: /dev/cpu/*/msr read+write, cpufreq writes in /sys after an OC-ratio change, /var/lib/linux-xtu and
+# /run/linux-xtu writes, /etc/linux-xtu and /proc reads, journalctl -k over /var/log/journal):
+#   ProtectSystem=strict + ReadWritePaths   the whole tree read-only except the two state directories; /dev, /proc, /sys stay as they are
+#   ProtectHome / PrivateTmp                no home directories, a private /tmp (nothing of the run uses either)
+#   ProtectKernelModules / ProtectKernelLogs / ProtectControlGroups / ProtectHostname   not needed; the kernel log is read from the journal files
+#   NoNewPrivileges / RestrictSUIDSGID / LockPersonality / RestrictNamespaces / RestrictRealtime / SystemCallArchitectures=native / UMask=0077
+#   RestrictAddressFamilies=AF_UNIX         no network at all
+# NOT set on purpose: PrivateDevices and ProtectClock (ProtectClock implies DeviceAllow=char-rtc, which closes every other device node, /dev/cpu/*/msr
+# included), ProtectKernelTunables (/sys read-only: the cpufreq cap after an OC-ratio change), CapabilityBoundingSet / SystemCallFilter (unverified on
+# hardware: a wrong set would only fail the run, but it would fail it).
+[Unit]
+Description=Linux XTU unattended boot restore of the accepted state
+Documentation=https://github.com/xyehya/linux-xtu
+After=local-fs.target systemd-tmpfiles-setup.service systemd-journald.service
+
+[Service]
+Type=exec
+ExecStart=/usr/bin/python3 -I /usr/lib/linux-xtu/linux-xtu-restore run
+KillSignal=SIGTERM
+# A stop (shutdown) during the apply: the mailbox transaction in flight completes, the apply stops at a safe point, the clean-marker check runs.
+TimeoutStopSec=300
+ProtectSystem=strict
+ReadWritePaths=/var/lib/linux-xtu /run/linux-xtu
+# D-054 (transition): the installed lock file of the earlier name is held too (see linux-xtu-helper.service)
+ReadWritePaths=-/run/arltuner
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectHostname=yes
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+RestrictAddressFamilies=AF_UNIX
+UMask=0077

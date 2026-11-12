@@ -1,0 +1,119 @@
+/* Design tokens — direction A "Bench" (desktop/DESIGN.md §3). The ONLY place a colour, size, duration or font is written as a literal.
+   Colour is meaning: structure is neutral graphite; cyan = an edit (set-point, not applied); white = measured / read back; grey = factory (fused);
+   orange = the one control that writes hardware (L4); green/amber/red = status, only on annunciators, results and refusals; channel hues only
+   inside plots. Contrast pairs are checked by desktop/design/tools/contrast.py (WCAG 2.2: text >= 4.5:1, control edges/traces >= 3:1). */
+:root {
+  color-scheme: dark;
+
+  /* ---- neutrals: graphite, not slate ---- */
+  --n0: #0C0D0F; /* bezel: app background, field wells, top/readout bars */
+  --n1: #131417; /* panel */
+  --n2: #1A1C1F; /* band, raised control, hovered row */
+  --n3: #24272B; /* selected row, pressed control */
+  --well: #0C0D0F; /* inside a numeric field (recessed) */
+  --rule: #2C2F34; /* 1 px separators; decorative only, never a control edge */
+  --rule-strong: #3A3E44; /* panel-to-panel seams, table header underline */
+  --edge: #6B7078; /* control edges (fields, buttons, segmented): >= 3:1 on n0..n2 */
+
+  /* ---- text ---- */
+  --fg: #ECEAE4; /* measured values, primary text */
+  --fg2: #B4B6B9; /* labels, secondary text */
+  --fg3: #8F9399; /* units, hints, factory values: the floor for any text (>= 4.5:1 on n0..n3) */
+  --fg-read: #D4D3CE; /* long-form prose (Tips): a step softer than fg for reading comfort */
+
+  /* ---- value grammar ---- */
+  --set: #3DD2EA; /* an edit: draft value, pending mark, draft trace. Nothing else is cyan. */
+  --set-bg: rgb(61 210 234 / 0.14);
+  --set-edge: #3DD2EA;
+  --meas: var(--fg); /* measured / read back */
+  --base: var(--fg3); /* factory (fused) / baseline */
+
+  /* ---- action ---- */
+  --write: #FF7A1F; /* L4 only: the button that writes CPU registers, and the live write progress */
+  --on-write: #1C0C00;
+  --run: #ECEAE4; /* L3: starts a load (stress, measure) — inverse neutral, never a hue */
+  --on-run: #0C0D0F;
+  --run-hover: #FFFFFF; /* L3 hovered */
+  --run-cost-rule: rgb(12 13 15 / 0.25); /* the seam before the cost tag on an L3 button */
+  --write-hover: #FF8C3D; /* L4 hovered */
+  --write-cost-rule: rgb(28 12 0 / 0.3); /* the seam before the cost tag on an L4 button */
+
+  /* ---- status (annunciators, results, refusals; never inside a plot) ---- */
+  --ok: #52D394;
+  --warn: #F2B53C;
+  --fault: #FF6259;
+  --ok-bg: rgb(82 211 148 / 0.12);
+  --warn-bg: rgb(242 181 60 / 0.12);
+  --fault-bg: rgb(255 98 89 / 0.12);
+  /* the outline of a status / edit tag (an edge, never a fill) */
+  --ok-line: rgb(82 211 148 / 0.45);
+  --warn-line: rgb(242 181 60 / 0.45);
+  --fault-line: rgb(255 98 89 / 0.5);
+  --set-line: rgb(61 210 234 / 0.45);
+  --lit-info: #B4B6B9; /* a lit informational annunciator (e.g. TURBO: normal under load) */
+  --on-lit: #121212;
+
+  /* ---- focus ---- */
+  --focus: #F4F2EC;
+  --selection: rgb(236 234 228 / 0.22);
+
+  /* ---- channels (plots and their legends only) ---- */
+  --ch-p: #F2CD5E; /* P-cores */
+  --ch-e: #A994FF; /* E-clusters */
+  --ch-r: #F083C6; /* ring */
+  /* 12-unit plots: two lightness ramps with direct labels at line ends */
+  --ch-p-0: #F7DC86; --ch-p-1: #F2CD5E; --ch-p-2: #E6BC45; --ch-p-3: #D9AB33;
+  --ch-p-4: #CC9C2B; --ch-p-5: #BD8D26; --ch-p-6: #AE7F22; --ch-p-7: #9F721F;
+  --ch-e-0: #C7BAFF; --ch-e-1: #A994FF; --ch-e-2: #8E77F0; --ch-e-3: #7C64E0;
+
+  /* ---- type ---- */
+  --sans: "IBM Plex Sans", "Noto Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", "Noto Sans Mono", ui-monospace, monospace;
+  --t-xs: 0.6875rem; --lh-xs: 0.875rem; /* band captions (UPPERCASE), annunciator legends */
+  --t-sm: 0.75rem; --lh-sm: 1rem; /* hints, units, column headers, tags, context line */
+  --t-md: 0.8125rem; --lh-md: 1.125rem; /* body, controls, table cells (the base) */
+  --t-lg: 0.9375rem; --lh-lg: 1.25rem; /* screen title, panel lead */
+  --t-xl: 1.125rem; --lh-xl: 1.5rem; /* inspector heading, Tips section heading */
+  --t-2xl: 1.625rem; --lh-2xl: 2rem; /* Tips page title, large readouts (stress timer) */
+  --t-read: 0.875rem; --lh-read: 1.375rem; /* long-form reading (Tips prose) only */
+  --w-reg: 400; --w-med: 500; --w-semi: 600;
+  --track-caps: 0.08em; /* UPPERCASE captions only */
+  --measure: 68ch; /* max line length of prose */
+
+  /* ---- space (4 px grid) ---- */
+  --s1: 0.25rem; --s2: 0.5rem; --s3: 0.75rem; --s4: 1rem; --s5: 1.25rem; --s6: 1.5rem; --s8: 2rem; --s10: 2.5rem;
+
+  /* ---- sizes ---- */
+  --row: 1.5rem; /* table row */
+  --ctl: 1.5rem; /* control height (field, button, segmented) */
+  --ctl-lg: 1.75rem; /* L3 / L4 buttons, commit sheet footer */
+  --band: 1.75rem; /* panel title band */
+  --topbar: 2rem;
+  --tabrow: 2rem; /* work-area header: screen title + sub-tabs */
+  --ctx: 1.5rem; /* context line (hints) */
+  --pendrow: 2rem; /* pending row */
+  --readout: 1.75rem; /* readout bar */
+  --readout-x: 4.5rem; /* readout bar expanded (60 s sparklines for all six values) */
+  --rail: 7rem;
+  --pane-units: 22.5rem; /* Tune unit table pane at >= 1180 px; 288 px below */
+  --sheet-w: 45rem; /* commit sheet */
+  --table-max: 64rem; /* widest a data table grows (QA-03); wider screens give the rest to plots and side panels */
+
+  /* ---- radius, borders, elevation ---- */
+  --r0: 0; /* panels, tables, bars, annunciators */
+  --r1: 2px; /* controls, tags */
+  --bw: 1px;
+  --e-overlay: 0 12px 32px rgb(0 0 0 / 0.55), 0 0 0 1px var(--rule-strong); /* sheet, popover, toast — nothing else */
+
+  /* ---- motion: numbers never tween ---- */
+  --m-fast: 80ms; /* hover, focus, pressed */
+  --m-panel: 160ms; /* sheet slide, expander open, readout bar expand */
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* ---- z-order ---- */
+  --z-sticky: 10; /* sticky table headers */
+  --z-bar: 20; /* top bar, pending row, readout bar */
+  --z-sheet: 30; /* commit sheet, drawer */
+  --z-pop: 40; /* popover, menu */
+  --z-toast: 50;
+}

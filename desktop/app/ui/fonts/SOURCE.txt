@@ -1,0 +1,15 @@
+IBM Plex, vendored for the desktop UI (decision D-053). Licence: SIL Open Font License 1.1, see OFL.txt (Copyright 2017 IBM Corp.,
+Reserved Font Name "Plex"). The files are unmodified; they are used under their original names, so the Reserved Font Name clause is not triggered.
+
+Source: github.com/IBM/plex, branch master, downloaded 2026-11-11 (plex-sans package 1.1.0, plex-mono package 2.5.0).
+
+bytes  sha256                                                            file  <- path in the IBM/plex repository
+63020  ba711a3085ff9f27440b6b9c4550cfc47c97bf36591d5da958b975bb3add8c1a  IBMPlexSans-Regular.woff2   <- packages/plex-sans/fonts/complete/woff2/
+66740  5660f8a658f8bb50dbc005232f885eadffd2bc1c235c4f6fbb63469d1f9cde6d  IBMPlexSans-Medium.woff2    <- packages/plex-sans/fonts/complete/woff2/
+67060  f78048030eab62e860efa39a0df79e2e5581bf122eb95b9bc42c0b8a4988d205  IBMPlexSans-SemiBold.woff2  <- packages/plex-sans/fonts/complete/woff2/
+49248  ba204497f16b6d334cee9d1e963a831b73e3a56e1d6300a8489d18df7214b350  IBMPlexMono-Regular.woff2   <- packages/plex-mono/fonts/complete/woff2/
+50400  33faf307fa6031fb4062276d7320a6d632de890cbb347576fd80cfa01077bc25  IBMPlexMono-Medium.woff2    <- packages/plex-mono/fonts/complete/woff2/
+ 4363  37784b44044a4ffd9256702b7c0982c37e5c8887ba90c6dca0479aea93dc898d  OFL.txt                     <- LICENSE.txt (CRLF -> LF, text unchanged)
+
+Total 296468 bytes of fonts. "complete" files (symbols − × → ≤ ≥ … ° ↑ ✓ ✕ › checked in both; Δ in Sans only), not the Latin-1 split,
+so no unicode-range bookkeeping.

@@ -1,0 +1,13 @@
+#!/usr/bin/python3 -I
+# linux-xtu boot restore launcher (D-053 item 3). Installed to /usr/lib/linux-xtu/linux-xtu-restore, root-owned, mode 0755; the ExecStart of
+# linux-xtu-restore.service is: /usr/bin/python3 -I /usr/lib/linux-xtu/linux-xtu-restore run   (arm / disarm / status: see linux_xtu.bootrestore).
+# `-I` (isolated: no PYTHONPATH/user site, no script directory or cwd on sys.path): the only code that can be imported is the installed, root-owned tree
+# added below, and as root linux_xtu.bootrestore refuses to run unless that whole tree passes the SPEC 4.4 trust check. Never run from a checkout.
+import sys
+
+sys.dont_write_bytecode = True  # the tree is precompiled at install time; root never writes into it afterwards
+sys.path.insert(0, "/usr/lib/linux-xtu")
+
+from linux_xtu.bootrestore import main  # noqa: E402
+
+sys.exit(main())

@@ -1,0 +1,40 @@
+[package]
+name = "linux-xtu-desktop"
+version = "0.2.0-dev"
+description = "Linux XTU desktop: unprivileged Tauri client for the linux-xtu root helper. Not affiliated with or endorsed by Intel; XTU is a trademark of Intel Corporation."
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[lib]
+name = "linux_xtu_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-notification = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# R-S3 (D-053 item 4): the native confirmation dialog (src/helper/native.rs). The gtk crate tauri itself uses on Linux, same version:
+# already in Cargo.lock, nothing new is downloaded.
+gtk = "0.18"
+
+[features]
+# Dev/test seam for the helper link (PLAN §3.1): accept a socket owned by the current uid.
+# Empty for now; build.rs refuses it in release profiles (the AppImage is a release build).
+dev-socket = []
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

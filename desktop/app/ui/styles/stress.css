@@ -1,0 +1,192 @@
+/* Stress (desktop/DESIGN.md §9.8): layout only. >= 1180 px: Setup | Units to load | Live, Earlier screens below across.
+   Below: Setup and Units stacked on the left, Live on the right. One large readout (the timer) per screen. */
+
+/* G-244 (QA-24): the grid is exactly the window height; Earlier screens takes what Setup / Units / Live leave (at least 180 px) and scrolls inside only when its list is longer.
+   When the top row alone is taller than the window, the body scrolls instead. */
+.lx-st {
+  height: 100%;
+  grid-template-columns: 25rem 18.5rem minmax(0, 1fr);
+  grid-template-areas:
+    "setup units live"
+    "hist hist hist";
+  grid-template-rows: auto minmax(11.25rem, 1fr);
+}
+
+#st-setup { grid-area: setup; }
+#st-units-panel { grid-area: units; }
+#st-live { grid-area: live; }
+#st-history-card { grid-area: hist; min-height: 11.25rem; }
+
+@media (max-width: 1179px) {
+  .lx-st {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas:
+      "setup live"
+      "units live"
+      "hist hist";
+    grid-template-rows: auto auto minmax(11.25rem, 1fr);
+  }
+}
+
+#st-setup .lx-panel-b {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.lx-st-tested .lx-kv {
+  margin: 0;
+}
+
+.lx-st-edits {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--s2);
+  margin-top: var(--s1);
+}
+
+.lx-st-edits[hidden] {
+  display: none;
+}
+
+/* the form: label column + control column, 32 px rows */
+.lx-st-form {
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr);
+  row-gap: var(--s2);
+  align-items: start;
+}
+
+.lx-st-row {
+  display: contents;
+}
+
+.lx-st-row[hidden] {
+  display: none;
+}
+
+.lx-st-row > .lx-lbl {
+  line-height: var(--ctl);
+}
+
+.lx-st-ctl {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s1);
+  min-width: 0;
+}
+
+.lx-st-explain {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+.lx-st-go {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.lx-st-status {
+  margin: 0;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-st-status:empty {
+  display: none;
+}
+
+.lx-st-quick {
+  display: inline-flex;
+  gap: 0;
+}
+
+#st-units-panel[data-disabled="true"] tbody td {
+  color: var(--fg3);
+}
+
+/* live: timer readout (mono 26), progress rule, the run's numbers, the plots, the result */
+.lx-st-live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.lx-st-live[hidden],
+.lx-st-result[hidden] {
+  display: none;
+}
+
+.lx-st-clock {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s1);
+}
+
+.lx-st-timer {
+  font-family: var(--mono);
+  font-size: var(--t-2xl);
+  line-height: var(--lh-2xl);
+  font-weight: var(--w-med);
+  color: var(--fg);
+}
+
+.lx-st-of {
+  font-family: var(--mono);
+  color: var(--fg3);
+}
+
+.lx-st-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1) var(--s5);
+  color: var(--fg2);
+}
+
+.lx-st-stats .lx-mono {
+  color: var(--fg);
+  font-weight: var(--w-med);
+}
+
+.lx-st-testing {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-st-testing:empty {
+  display: none;
+}
+
+.lx-st-plots {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.lx-st-result {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s3);
+}
+
+.lx-st-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+}
+
+.lx-st-lines {
+  margin: 0;
+  padding-left: var(--s4);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+/* result words: status colours only on results (§3.1), on this screen only (other screens use .lx-res[data-res]) */
+.lx-st [data-result="ok"] { color: var(--ok); }
+.lx-st [data-result="fault"] { color: var(--fault); }
+.lx-st [data-result="dim"] { color: var(--fg3); }

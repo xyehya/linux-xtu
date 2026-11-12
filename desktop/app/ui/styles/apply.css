@@ -1,0 +1,184 @@
+/* apply.css: the commit sheet's body (desktop/DESIGN.md §5.10; linked by index.html). The shell — head, slide, footer frame, .lx-sheet-sec,
+   .lx-box, .lx-kv, .lx-notes, .lx-tbl — is in panels.css / tables.css; this file adds only what the sheet's content needs. Tokens only; no inline styles. */
+
+/* the Technical disclosure of the plan notes (G-242, QA-31): the helper's own wording, quiet */
+.ap-tech {
+  margin: var(--s1) 0 0;
+  padding-left: var(--s4);
+  font-size: var(--t-sm);
+}
+
+/* the summary row under the head: "3 writes · V/F & ratios, power limits  [plan ready]  expires 20:03" */
+.ap-sum {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding-top: var(--s2);
+  padding-bottom: var(--s2);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+
+.ap-sum-n {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-sum-n .lx-mono {
+  color: var(--fg);
+}
+
+.ap-sum-exp {
+  margin-left: auto;
+  color: var(--fg3);
+}
+
+/* the result / refusal box: the first thing under the summary, never scrolled away */
+.ap-out {
+  padding-top: var(--s2);
+  padding-bottom: var(--s2);
+}
+
+.ap-box {
+  max-width: none;
+}
+
+.ap-box-more {
+  color: var(--fg2);
+}
+
+/* the progress rule while writing: write-orange, under the summary */
+.ap-rule {
+  margin: 0;
+}
+
+/* the diff: # · Unit · What · Before · After · Δ · Status */
+.ap-diff-sec {
+  padding-top: 0;
+  padding-bottom: var(--s2);
+}
+
+.ap-diff td.ap-what {
+  color: var(--fg2);
+  white-space: normal;
+}
+
+.ap-diff td.ap-delta {
+  color: var(--fg2);
+}
+
+.ap-diff th:last-child,
+.ap-diff td.ap-st {
+  width: 9.5em;
+}
+
+.ap-diff tr.lx-grp > th {
+  padding-top: var(--s2);
+}
+
+/* the status column: words, coloured by state; no pills */
+.ap-st {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.ap-st[data-st="writing"] {
+  color: var(--write);
+  font-weight: var(--w-semi);
+}
+
+.ap-st[data-st="written"] {
+  color: var(--fg2);
+}
+
+.ap-st[data-st="ok"] {
+  color: var(--ok);
+}
+
+.ap-st[data-st="mismatch"],
+.ap-st[data-st="interrupted"] {
+  color: var(--fault);
+  font-weight: var(--w-semi);
+}
+
+.ap-st[data-st="unverified"] {
+  color: var(--warn);
+}
+
+/* read-back rows that differ */
+.ap-rb td.ap-bad {
+  color: var(--fault);
+}
+
+/* plan warnings: amber, always visible, apart from the folded notes */
+.ap-warns {
+  padding-top: var(--s2);
+  padding-bottom: var(--s2);
+  -webkit-user-select: text; /* data, copyable (base.css: the page is not selectable by default) */
+  user-select: text;
+}
+
+.ap-warn-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-left: 0.125rem solid var(--warn);
+  background: var(--warn-bg);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+.ap-warn-list li {
+  padding: var(--s1) var(--s3) var(--s1) calc(var(--s3) - 0.125rem);
+}
+
+.ap-warn-list li + li {
+  border-top: var(--bw) solid var(--rule);
+}
+
+.ap-warn-list b {
+  color: var(--warn);
+  font-weight: var(--w-semi);
+}
+
+.ap-warn-t {
+  color: var(--warn);
+}
+
+.ap-kv dd {
+  color: var(--fg2);
+}
+
+/* the write order, folded */
+.ap-steps {
+  margin: var(--s1) 0 0;
+  padding-left: 1.375rem;
+  max-height: 11.25rem;
+  overflow: auto;
+  color: var(--fg2);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+/* a plan refusal landed on its field in the Tune editor */
+.plan-error {
+  outline: 0.125rem solid var(--fault);
+  outline-offset: 0.0625rem;
+}
+
+.field-error-note {
+  margin: var(--s1) 0 0;
+  color: var(--fault);
+  font-size: var(--t-sm);
+  max-width: 60ch;
+}
+
+.plan-error-banner {
+  padding: var(--s2) var(--s3);
+  border-left: 0.125rem solid var(--fault);
+  background: var(--fault-bg);
+}

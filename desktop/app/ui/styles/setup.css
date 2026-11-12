@@ -1,0 +1,54 @@
+/* setup.css: layout of the Setup screen (desktop/DESIGN.md §9.12). One panel, said once; colours and sizes from tokens.css only. */
+.lx-setup {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+
+.lx-setup-b {
+  max-width: var(--measure);
+}
+
+.lx-setup-cmd {
+  align-self: stretch;
+  margin: var(--s1) 0 0;
+  padding: var(--s2) var(--s3);
+  color: var(--fg);
+  font-size: var(--t-md);
+  white-space: pre;
+  overflow-x: auto;
+  user-select: all;
+}
+
+.lx-setup-status {
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+.lx-setup .lx-empty p.lx-setup-note {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-setup-said {
+  align-self: stretch;
+}
+
+.lx-setup .lx-empty .lx-setup-said p {
+  margin-top: var(--s1);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.lx-setup > .lx-panel[data-tone="error"] .lx-empty-t {
+  color: var(--fault);
+}
+
+.lx-setup-offscreen {
+  position: fixed;
+  left: -9999px;
+  top: 0;
+  opacity: 0;
+}

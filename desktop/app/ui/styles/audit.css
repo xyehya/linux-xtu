@@ -1,0 +1,101 @@
+/* audit.css: layout of the Audit screen (desktop/DESIGN.md §9.11): one panel of operations, raw rows on expand. Colours and sizes from tokens.css only. */
+.lx-audit {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+
+.lx-audit-search {
+  width: 28ch;
+}
+
+.lx-audit-holder {
+  min-height: 0;
+}
+
+.lx-audit-ops td.lx-audit-tg,
+.lx-audit-ops th.lx-audit-tg {
+  width: var(--s6);
+  padding: 0 0 0 var(--s1);
+}
+
+.lx-audit-tg-b,
+.lx-audit-raw-b {
+  min-width: var(--s5);
+  padding: 0 var(--s1);
+  font-family: var(--mono);
+}
+
+.lx-audit-line,
+.lx-audit-detail {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg2);
+}
+
+.lx-audit-none {
+  color: var(--fg3);
+}
+
+/* result words and glyphs, never pills (shared by Audit and System › Preflight): ok / refused / read back ≠ / check · ✓ ✕ ? */
+.lx-res[data-res="ok"] {
+  color: var(--ok);
+}
+
+.lx-res[data-res="warn"],
+.lx-audit-verdict[data-res="warn"] {
+  color: var(--warn);
+}
+
+.lx-res[data-res="fault"],
+.lx-audit-verdict[data-res="fault"] {
+  color: var(--fault);
+}
+
+.lx-res[data-res=""] {
+  color: var(--fg3);
+}
+
+.lx-audit td.lx-res[data-res=""] {
+  color: var(--fg2);
+}
+
+.lx-audit-verdict[data-res="ok"] {
+  color: var(--ok);
+}
+
+.lx-audit-ops tr.lx-audit-open > td {
+  padding: 0 0 var(--s2) var(--s6);
+  background: var(--n0);
+}
+
+.lx-audit-ops tr.lx-audit-open:hover > td {
+  background: var(--n0);
+}
+
+.lx-audit-raw {
+  background: var(--n0);
+}
+
+.lx-audit-raw td,
+.lx-audit-raw th {
+  padding: 0 var(--s2);
+}
+
+.lx-audit-raw thead th {
+  position: static;
+  background: var(--n0);
+}
+
+.lx-audit-json {
+  margin: 0;
+  padding: var(--s2);
+  background: var(--n2);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}

@@ -1,0 +1,22 @@
+# linux-xtu root helper: the socket the GUI connects to (D-043). Socket activation: systemd owns this socket and starts
+# linux-xtu-helper.service on the first connect; the helper exits again after ~10 idle minutes (idle_exit_s in /etc/linux-xtu/helper.toml).
+# D-053 item 4: the node is root:linux-xtu mode 0660, so only members of the linux-xtu group can connect (and socket-activate the root helper); install.sh
+# creates the group and adds every user of the [access] allowlist to it (a newly added member logs in again once). The gate is still the helper's own
+# SO_PEERCRED check of every connection against [access] in /etc/linux-xtu/helper.toml (root only if listed by name): the group only narrows who reaches it.
+# install.sh --socket-mode 0666 writes the D-043 amendment form instead (mode 0666, no group: no re-login, any local user can socket-activate the helper).
+# /run/linux-xtu stays root 0755, so nobody can replace the socket.
+[Unit]
+Description=Linux XTU helper socket
+Documentation=https://github.com/xyehya/linux-xtu
+
+[Socket]
+ListenStream=/run/linux-xtu/helper.sock
+SocketUser=root
+SocketGroup=linux-xtu
+SocketMode=0660
+DirectoryMode=0755
+RemoveOnStop=yes
+Accept=no
+
+[Install]
+WantedBy=sockets.target

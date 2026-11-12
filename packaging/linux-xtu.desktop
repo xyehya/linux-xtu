@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Linux XTU
+GenericName=CPU tuning
+Comment=Read and tune an Intel Core Ultra 200S (Arrow Lake-S) CPU through the linux-xtu root helper (not affiliated with Intel)
+Exec=@APPIMAGE@
+Icon=linux-xtu
+Terminal=false
+Categories=System;Settings;
+Keywords=CPU;undervolt;overclock;voltage;tuning;
+StartupNotify=true
+X-Linux-XTU-Packaged=true

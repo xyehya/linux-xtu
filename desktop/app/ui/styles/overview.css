@@ -1,0 +1,107 @@
+/* Overview (desktop/DESIGN.md §9.1): layout only. Units · live | History on top, Limits now (+ throttle events) | State + Memory below.
+   The six live values stay in the readout bar (V-05); heat is a bar in the Busy cell (V-06); no tiles, no donut (V-22). */
+
+.lx-ov {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: auto 1fr;
+}
+
+.lx-ov-side {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--rule-strong);
+}
+
+.lx-ov-side > .lx-panel:last-child {
+  flex: 1 1 auto;
+}
+
+/* G-248: the bottom row fills its height at any window size. Limits now + the throttle events: the events list takes what is left and scrolls inside it (flex-basis 0, so a long
+   list never grows the row); State + Memory: the memory body takes what is left of the side column the same way. */
+#ov-limits-panel > .lx-panel-b {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+}
+
+#ov-limits-panel > .lx-panel-b > table {
+  flex: 0 0 auto;
+}
+
+#ov-events {
+  flex: 1 1 0;
+  min-height: 6rem;
+  overflow: auto;
+}
+
+#ov-memory > .lx-panel-b {
+  flex: 1 1 0;
+  min-height: 6rem;
+  overflow: auto;
+}
+
+/* four small multiples stacked: one time axis (ticks on the last only), one cursor */
+.lx-ov-mult {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+/* limits now: legend · words · where to change it */
+.lx-ov-ann {
+  width: 4.75rem;
+}
+
+.lx-ov-go {
+  width: 1%;
+  text-align: right;
+  white-space: nowrap;
+}
+
+#ov-limits tr[data-on="false"] td:nth-child(2) {
+  color: var(--fg3);
+}
+
+.lx-ov-when {
+  width: 4.75rem;
+  color: var(--fg2);
+}
+
+/* memory */
+.lx-ov-mem {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.lx-ov-mem:empty {
+  display: none;
+}
+
+.lx-ov-mem-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+}
+
+.lx-ov-mem-big {
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+  font-weight: var(--w-med);
+  color: var(--fg);
+}
+
+#ov-state .lx-kv dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 var(--s2);
+  min-width: 0;
+}
+
+@media (max-width: 1179px) {
+  .lx-ov-go .lx-btn {
+    padding-inline: var(--s1);
+  }
+}

@@ -1,0 +1,418 @@
+/* Panels and surfaces (desktop/DESIGN.md §5.9–§5.13): panel + title band, key/value list, boxes (refusal / warning / info), empty, loading,
+   disconnected, commit sheet, popover, toast. Radius 0; the only shadow is --e-overlay on things that float. */
+
+.lx-panel {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--n1);
+}
+
+.lx-band {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex: 0 0 var(--band);
+  height: var(--band);
+  padding: 0 var(--s2) 0 var(--s3);
+  border-bottom: var(--bw) solid var(--rule);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.lx-band-t {
+  color: var(--fg2);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+
+.lx-band-m {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-band-m .lx-mono {
+  color: var(--fg2);
+}
+
+.lx-band-end {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-left: auto;
+}
+
+.lx-panel-b {
+  padding: var(--s3);
+  min-height: 0;
+}
+
+.lx-panel-b--flush {
+  padding: 0;
+}
+
+.lx-panel-b--scroll {
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+/* inspector heading: the unit you are editing, then its facts in one mono line */
+.lx-ihead {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  padding: 0.625rem var(--s3) 0.5rem;
+  border-bottom: var(--bw) solid var(--rule);
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.lx-ihead-t {
+  font-size: var(--t-xl);
+  line-height: var(--lh-xl);
+  font-weight: var(--w-semi);
+  color: var(--fg);
+}
+
+.lx-ihead-f {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-ihead-f b {
+  font-family: var(--mono);
+  font-weight: var(--w-reg);
+  color: var(--fg);
+}
+
+/* key/value list (facts, limits, helper status) */
+.lx-kv {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--s4);
+  row-gap: 0.25rem;
+  margin: 0;
+}
+
+.lx-kv dt {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+  line-height: var(--lh-md);
+}
+
+.lx-kv dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--fg);
+}
+
+.lx-kv dd.lx-mono {
+  font-size: var(--t-md);
+}
+
+/* boxes: a refusal, a warning, a neutral fact that must be read. 2 px status edge, faint tint; title says what, body says why + what to do. */
+.lx-box {
+  padding: 0.5rem var(--s3) 0.5rem calc(var(--s3) - 2px);
+  border-left: 2px solid var(--edge);
+  background: var(--n2);
+  color: var(--fg2);
+  font-size: var(--t-md);
+  line-height: var(--lh-md);
+  max-width: 88ch;
+}
+
+.lx-box-t {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--fg);
+  font-weight: var(--w-semi);
+}
+
+.lx-box--fault {
+  border-left-color: var(--fault);
+  background: var(--fault-bg);
+}
+
+.lx-box--fault .lx-box-t {
+  color: var(--fault);
+}
+
+.lx-box--warn {
+  border-left-color: var(--warn);
+  background: var(--warn-bg);
+}
+
+.lx-box--warn .lx-box-t {
+  color: var(--warn);
+}
+
+.lx-box--ok {
+  border-left-color: var(--ok);
+  background: var(--ok-bg);
+}
+
+.lx-box--ok .lx-box-t {
+  color: var(--ok);
+}
+
+/* empty / first use: what this is for, the one action that starts it, what that costs */
+.lx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--s2);
+  max-width: 60ch;
+  padding: var(--s6) var(--s4);
+}
+
+.lx-empty-t {
+  color: var(--fg);
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+  font-weight: var(--w-semi);
+}
+
+.lx-empty p {
+  margin: 0;
+  color: var(--fg2);
+}
+
+.lx-empty .lx-empty-act {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  margin-top: var(--s2);
+}
+
+/* loading: the structure stays, values show "—", the band carries the step and a progress rule */
+.lx-progress {
+  position: relative;
+  height: 2px;
+  background: var(--rule);
+  overflow: hidden;
+}
+
+.lx-progress::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: calc(var(--p, 0) * 100%);
+  background: var(--fg2);
+}
+
+.lx-progress--write::before {
+  background: var(--write);
+}
+
+/* disconnected: values are "—", fields locked; the reason is said once (Setup / band), not on every cell */
+.lx-offline .lx-ro-v,
+.lx-offline [data-v] {
+  color: var(--fg3);
+}
+
+/* ================================================================ commit sheet (Review): slides over the work area from the right */
+.lx-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: var(--z-sheet);
+  display: flex;
+  flex-direction: column;
+  width: min(var(--sheet-w), 100%);
+  background: var(--n1);
+  border-left: var(--bw) solid var(--rule-strong);
+  box-shadow: var(--e-overlay);
+  transform: translateX(0);
+  transition: transform var(--m-panel) var(--ease);
+}
+
+.lx-sheet[data-open="false"] {
+  transform: translateX(calc(100% + 2.5rem));
+  pointer-events: none; /* G-248 (QA-06 / QA-14): a closed (sliding or parked) sheet never catches a click meant for the screen under it */
+}
+
+.lx-sheet-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex: 0 0 auto;
+  height: var(--tabrow);
+  padding: 0 var(--s2) 0 var(--s4);
+  border-bottom: var(--bw) solid var(--rule-strong);
+  white-space: nowrap;
+}
+
+.lx-sheet-t {
+  font-size: var(--t-lg);
+  font-weight: var(--w-semi);
+}
+
+.lx-sheet-b {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lx-sheet-sec {
+  padding: var(--s3) var(--s4);
+  border-bottom: var(--bw) solid var(--rule);
+}
+
+.lx-sheet-sec > .lx-band-t {
+  display: block;
+  margin-bottom: var(--s2);
+}
+
+.lx-sheet-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  flex: 0 0 auto;
+  height: 3.25rem;
+  padding: 0 var(--s4);
+  border-top: var(--bw) solid var(--rule-strong);
+  background: var(--n1);
+}
+
+.lx-sheet-foot .lx-sheet-status {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* collapsible notes inside a sheet or panel */
+.lx-notes > summary {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  height: var(--row);
+  color: var(--fg2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.lx-notes > summary::-webkit-details-marker {
+  display: none;
+}
+
+.lx-notes > summary::before {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 0.25rem solid var(--fg3);
+  border-top: 0.25rem solid transparent;
+  border-bottom: 0.25rem solid transparent;
+  transition: transform var(--m-fast) var(--ease);
+}
+
+.lx-notes[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.lx-notes ul {
+  margin: 0.25rem 0 0;
+  padding-left: 1.125rem;
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+.lx-notes li + li {
+  margin-top: 0.25rem;
+}
+
+/* ================================================================ popover and toast */
+.lx-pop {
+  position: absolute;
+  z-index: var(--z-pop);
+  min-width: 15rem;
+  max-width: 26.25rem;
+  max-height: var(--pop-max-h, 20rem); /* R2-08: components/popover.js sets it to the room on the side the popover opens to */
+  overflow: auto;
+  padding: var(--s2) 0;
+  background: var(--n2);
+  border: var(--bw) solid var(--rule-strong);
+  box-shadow: var(--e-overlay);
+}
+
+.lx-pop .lx-band {
+  border-bottom-color: var(--rule-strong);
+}
+
+.lx-pop[data-pop="limits"] {
+  width: 26.25rem;
+}
+
+.lx-toasts {
+  position: absolute;
+  -webkit-user-select: text; /* data, copyable (base.css: the page is not selectable by default) */
+  user-select: text;
+  right: var(--s3);
+  bottom: var(--s3);
+  z-index: var(--z-toast);
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  width: 22.5rem;
+  pointer-events: none;
+}
+
+.lx-toast {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px var(--s2);
+  padding: 0.5rem var(--s2) 0.5rem calc(var(--s3) - 2px);
+  background: var(--n2);
+  border-left: 2px solid var(--fg3);
+  box-shadow: var(--e-overlay);
+  pointer-events: auto;
+}
+
+.lx-toast-t {
+  color: var(--fg);
+  font-weight: var(--w-semi);
+}
+
+.lx-toast-b {
+  grid-column: 1;
+  color: var(--fg2);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+.lx-toast > .lx-btn {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  align-self: start;
+}
+
+.lx-toast--ok { border-left-color: var(--ok); }
+.lx-toast--warn { border-left-color: var(--warn); }
+.lx-toast--fault { border-left-color: var(--fault); }
+
+/* a band that closes a section from above (a footer band inside a panel) */
+.lx-band--top {
+  border-top: var(--bw) solid var(--rule);
+  border-bottom: 0;
+}
+
+.lx-band .lx-lbl {
+  font-size: var(--t-sm);
+}

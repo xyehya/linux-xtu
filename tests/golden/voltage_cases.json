@@ -1,0 +1,1778 @@
+{
+ "schema": 1,
+ "about": "Golden cases of the V/F voltage model (R-B4), shared by the desktop UI (desktop/app/ui/tests/golden_voltage.test.mjs) and the Python helper. See README.md here.",
+ "encoding": {
+  "offset_raw": "sign(mV) * ((|mV| * 1024 + 512) // 1000), 11-bit two's complement in [31:21]; mV of a raw = raw * 1000 / 1024",
+  "target_raw": "round(V * 1024) in [19:8]; mode [20] = 0 (adaptive)",
+  "word": "ratio [7:0] | target_raw << 8 | (offset_raw & 0x7FF) << 21",
+  "source": "docs/knowledge/registers.md 'V/F data word' [DOC coreboot oc_mailbox.h]"
+ },
+ "fixture": "desktop/app/ui/fixtures/tune-read.json (simulator; not reference-machine numbers, D-036)",
+ "units": {
+  "P0": {
+   "kind": "P",
+   "cpus": [
+    0
+   ],
+   "favored": 57,
+   "fused": {
+    "ratio": 57,
+    "v": 1.4258,
+    "word": "0x0005B439"
+   },
+   "points": {
+    "1": 8,
+    "2": 20,
+    "3": 30,
+    "4": 48,
+    "5": 53,
+    "6": 55,
+    "7": 56,
+    "8": 57
+   },
+   "oc_word": "0x00000039"
+  },
+  "P1": {
+   "kind": "P",
+   "cpus": [
+    1
+   ],
+   "favored": 55,
+   "fused": {
+    "ratio": 57,
+    "v": 1.3047,
+    "word": "0x00053839"
+   },
+   "points": {
+    "1": 8,
+    "2": 20,
+    "3": 30,
+    "4": 48,
+    "5": 53,
+    "6": 55,
+    "7": 56,
+    "8": 57
+   },
+   "oc_word": "0x00000000"
+  },
+  "EC1": {
+   "kind": "E",
+   "cpus": [
+    12,
+    13,
+    14,
+    15
+   ],
+   "favored": null,
+   "fused": {
+    "ratio": 46,
+    "v": 1.1367,
+    "word": "0x00048C2E"
+   },
+   "points": {
+    "1": 8,
+    "2": 15,
+    "3": 23,
+    "4": 30,
+    "5": 40,
+    "6": 46
+   },
+   "oc_word": "0x00000000"
+  }
+ },
+ "limits": {
+  "offset_mv": [
+   -1000,
+   999
+  ],
+  "P": {
+   "max_mv": 1625,
+   "max_ratio": 120
+  },
+  "E": {
+   "max_mv": 1355,
+   "max_ratio": 120
+  },
+  "ring": {
+   "max_mv": 1999,
+   "max_ratio": 85
+  }
+ },
+ "turbo": {
+  "P": {
+   "ratios": [
+    57,
+    57,
+    55,
+    55,
+    55,
+    55,
+    55,
+    55
+   ],
+   "counts": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8
+   ]
+  },
+  "E": {
+   "ratios": [
+    48,
+    48,
+    48,
+    48,
+    48,
+    48,
+    48,
+    48
+   ],
+   "counts": [
+    1,
+    2,
+    3,
+    4,
+    6,
+    8,
+    12,
+    16
+   ]
+  }
+ },
+ "tolerance_v": 0.0005,
+ "cases": [
+  {
+   "id": "R09-curve-over-point",
+   "title": "a point at -20 mV with a whole-curve -30 mV runs -50 mV; the whole-curve edit writes only the P2 = 0 word",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)",
+    "[DOC coreboot oc_mailbox.h] V/F word: ratio [7:0], target [19:8] U12.2.10, mode [20], offset [31:21] S11; [DECOMPILED ThrottleStop] mV->raw (|mV|*1024+512)//1000 (registers.md)"
+   ],
+   "read": {
+    "P0": {
+     "points_mv": {
+      "53": -20
+     }
+    }
+   },
+   "read_words": {
+    "P0": {
+     "0": "0x00000039",
+     "5": "0xFD800035"
+    }
+   },
+   "baseline_v": {
+    "P0": {
+     "48": 1.15,
+     "53": 1.2,
+     "55": 1.25,
+     "56": 1.3,
+     "57": 1.4258
+    }
+   },
+   "edits": [
+    {
+     "op": "curve",
+     "units": [
+      "P0"
+     ],
+     "mv": -30
+    }
+   ],
+   "expect": {
+    "layers": {
+     "P0": {
+      "curve_mv": -30,
+      "points_mv": {}
+     }
+    },
+    "read_layers": {
+     "P0": {
+      "curve_mv": 0,
+      "points_mv": {
+       "53": -20
+      }
+     }
+    },
+    "effective_offset_mv": {
+     "P0": {
+      "8": -30,
+      "48": -30,
+      "53": -50,
+      "57": -30
+     }
+    },
+    "effective_offset_raw": {
+     "P0": {
+      "8": -31,
+      "53": -51,
+      "57": -31
+     }
+    },
+    "pending": {
+     "total": 1
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "curve",
+        "mv": -30
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P0",
+      "cpu": 0,
+      "p2": 0,
+      "word": "0xFC200039"
+     }
+    ],
+    "voltage_v": {
+     "P0": {
+      "48": 1.12,
+      "53": 1.15,
+      "57": 1.3958
+     }
+    },
+    "read_after": {
+     "P0": {
+      "curve_mv": -30.273,
+      "points_mv": {
+       "53": -19.531
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "R09-point-under-curve",
+   "title": "a whole-curve -30 mV in force stays its own layer; a point edit of -20 mV runs -50 mV and writes only the point word",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)",
+    "[MEASURED lnx 2026-10-02] per-point offset write = point_ratio | offset << 21, V target 0 (platform-arl-s.md §3); [DOC coreboot oc_mailbox.h] word layout (registers.md)"
+   ],
+   "read": {
+    "P0": {
+     "oc": {
+      "ratio": 57,
+      "v_target_v": null,
+      "offset_mv": -30
+     }
+    }
+   },
+   "read_words": {
+    "P0": {
+     "0": "0xFC200039",
+     "5": "0x00000035"
+    }
+   },
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": -20
+    }
+   ],
+   "expect": {
+    "layers": {
+     "P0": {
+      "curve_mv": null,
+      "points_mv": {
+       "53": -20
+      }
+     }
+    },
+    "read_layers": {
+     "P0": {
+      "curve_mv": -30,
+      "points_mv": {}
+     }
+    },
+    "effective_offset_raw": {
+     "P0": {
+      "53": -51,
+      "55": -31
+     }
+    },
+    "pending": {
+     "total": 1
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "points",
+        "mv": {
+         "53": -20
+        }
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P0",
+      "cpu": 0,
+      "p2": 5,
+      "word": "0xFD800035"
+     }
+    ],
+    "read_after": {
+     "P0": {
+      "curve_mv": -30.273,
+      "points_mv": {
+       "53": -19.531
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "R09-curve-and-points-one-review",
+   "title": "a whole-curve change and a point change on one unit cannot go in one intent (one row per unit, one offset kind per row): refused, never folded into points",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)",
+    "[DOC src/linux_xtu/helper/tune_intent.py canonical_intent] one row per target ('a target appears in two rows')"
+   ],
+   "edits": [
+    {
+     "op": "curve",
+     "units": [
+      "P0"
+     ],
+     "mv": -30
+    },
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": -20
+    }
+   ],
+   "expect": {
+    "layers": {
+     "P0": {
+      "curve_mv": -30,
+      "points_mv": {
+       "53": -20
+      }
+     }
+    },
+    "effective_offset_raw": {
+     "P0": {
+      "53": -51
+     }
+    },
+    "intent_refusal": {
+     "reason": "refused.curve_and_points",
+     "unit": "P0"
+    },
+    "helper_intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "curve",
+        "mv": -30
+       },
+       "v_target_v": null,
+       "ratio": null
+      },
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "points",
+        "mv": {
+         "53": -20
+        }
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "helper_refusal": {
+     "code": "BAD_REQUEST",
+     "message_re": "a target appears in two rows"
+    }
+   }
+  },
+  {
+   "id": "curve-cold-P-word",
+   "title": "a whole-curve offset on a P-core whose OC word reads 0: the word takes the core's own max ratio (0x1C[7:0], capped at the fused top), target 0 (no OC point)",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)",
+    "[MEASURED lnx 2026-10-11/12] a V target with OC ratio <= top fused ratio is not retained; written as 0 (D-035, G-124, platform-arl-s.md §3)",
+    "[MEASURED win 2026-10-01] with no target given the word carries the fused 0x09 voltage [19:8], offset not added (registers.md XTU write procedure; planner xtu_word)"
+   ],
+   "edits": [
+    {
+     "op": "curve",
+     "units": [
+      "P1"
+     ],
+     "mv": -15
+    }
+   ],
+   "expect": {
+    "layers": {
+     "P1": {
+      "curve_mv": -15,
+      "points_mv": {}
+     }
+    },
+    "effective_offset_raw": {
+     "P1": {
+      "8": -15,
+      "57": -15
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P1",
+       "offset": {
+        "kind": "curve",
+        "mv": -15
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P1",
+      "cpu": 1,
+      "p2": 0,
+      "word": "0xFE200037"
+     }
+    ],
+    "read_after": {
+     "P1": {
+      "curve_mv": -14.648,
+      "points_mv": {}
+     }
+    }
+   }
+  },
+  {
+   "id": "curve-E-cluster",
+   "title": "an E cluster is one unit: one row, the P2 = 0 word on each of its four CPUs; on a cold word the ratio is the fused top (no OC point)",
+   "evidence": [
+    "[MEASURED lnx 2026-09-29] four E-cores per cluster; [COMMUNITY SkatterBencher] one DLVR per cluster; the app writes all four (platform-arl-s.md §2)",
+    "[MEASURED lnx 2026-10-12] on a cold E word an offset-only 0x11 moved the whole cluster curve and added no OC point (tuning-results.md §6; G-122 caps the filled ratio at the fused top)",
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)"
+   ],
+   "edits": [
+    {
+     "op": "curve",
+     "units": [
+      "EC1"
+     ],
+     "mv": -20
+    }
+   ],
+   "expect": {
+    "layers": {
+     "EC1": {
+      "curve_mv": -20,
+      "points_mv": {}
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "EC1",
+       "offset": {
+        "kind": "curve",
+        "mv": -20
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "EC1",
+      "cpu": 12,
+      "p2": 0,
+      "word": "0xFD80002E"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 13,
+      "p2": 0,
+      "word": "0xFD80002E"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 14,
+      "p2": 0,
+      "word": "0xFD80002E"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 15,
+      "p2": 0,
+      "word": "0xFD80002E"
+     }
+    ],
+    "read_after": {
+     "EC1": {
+      "curve_mv": -19.531,
+      "points_mv": {}
+     }
+    }
+   }
+  },
+  {
+   "id": "point-E-cluster",
+   "title": "a point edit on an E cluster: one row, the point word on each of its four CPUs",
+   "evidence": [
+    "[MEASURED lnx 2026-09-29] four E-cores per cluster; [COMMUNITY SkatterBencher] one DLVR per cluster; the app writes all four (platform-arl-s.md §2)",
+    "[MEASURED lnx 2026-10-02] per-point offset write = point_ratio | offset << 21, V target 0 (platform-arl-s.md §3); [DOC coreboot oc_mailbox.h] word layout (registers.md)"
+   ],
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "EC1"
+     ],
+     "ratio": 30,
+     "mv": -10
+    }
+   ],
+   "expect": {
+    "layers": {
+     "EC1": {
+      "curve_mv": null,
+      "points_mv": {
+       "30": -10
+      }
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "EC1",
+       "offset": {
+        "kind": "points",
+        "mv": {
+         "30": -10
+        }
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "EC1",
+      "cpu": 12,
+      "p2": 4,
+      "word": "0xFEC0001E"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 13,
+      "p2": 4,
+      "word": "0xFEC0001E"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 14,
+      "p2": 4,
+      "word": "0xFEC0001E"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 15,
+      "p2": 4,
+      "word": "0xFEC0001E"
+     }
+    ],
+    "read_after": {
+     "EC1": {
+      "curve_mv": 0,
+      "points_mv": {
+       "30": -9.766
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "point-word-recorded",
+   "title": "P0 53x at -20 mV: the point word the simulator recorded (fixtures/tune-apply.json read-back)",
+   "evidence": [
+    "[MEASURED lnx 2026-10-02] per-point offset write = point_ratio | offset << 21, V target 0 (platform-arl-s.md §3); [DOC coreboot oc_mailbox.h] word layout (registers.md)"
+   ],
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": -20
+    }
+   ],
+   "expect": {
+    "layers": {
+     "P0": {
+      "curve_mv": null,
+      "points_mv": {
+       "53": -20
+      }
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "points",
+        "mv": {
+         "53": -20
+        }
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P0",
+      "cpu": 0,
+      "p2": 5,
+      "word": "0xFD800035"
+     }
+    ]
+   }
+  },
+  {
+   "id": "monotonic-clamp-with-curve",
+   "title": "the V(n) >= V(n-1) clamp works on the effective offsets (whole-curve + point)",
+   "evidence": [
+    "[MEASURED lnx 2026-10-02] V(n) >= V(n-1): a deeper offset is clamped up (platform-arl-s.md §3)",
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)"
+   ],
+   "read": {
+    "P0": {
+     "oc": {
+      "ratio": 57,
+      "v_target_v": null,
+      "offset_mv": -10
+     }
+    }
+   },
+   "baseline_v": {
+    "P0": {
+     "48": 1.0,
+     "53": 1.02
+    }
+   },
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": -40
+    }
+   ],
+   "expect": {
+    "voltage_v": {
+     "P0": {
+      "48": 0.99,
+      "53": 0.99
+     }
+    },
+    "clamped_by": {
+     "P0": {
+      "53": {
+       "ratio": 48,
+       "point": 4
+      }
+     }
+    }
+   }
+  },
+  {
+   "id": "oc-new-no-voltage-unoffset-fused",
+   "title": "a new OC point with no voltage typed asks for the UN-OFFSET fused top voltage: the top point's -50 mV is not inherited",
+   "evidence": [
+    "[MEASURED lnx 2026-10-19] an OC point is created by ONE word ratio + target: P0 58x word 0x0005B43A (G-241, platform-arl-s.md §3)",
+    "[MEASURED win 2026-10-01] with no target given the word carries the fused 0x09 voltage [19:8], offset not added (registers.md XTU write procedure; planner xtu_word)",
+    "[MEASURED lnx 2026-11-11] a 56x point with offset 0 requested the stock voltage (P VID 1.348 V at 56x vs 1.271 V at the undervolted 55x): a point's offset is not inherited by the bins above (tuning-results.md 2026-11-11)",
+    "[MEASURED lnx 2026-10-11/13] an OC target below the top fused point is lifted to it, the top point WITH its offset (target 1.100 V ran 1.1125 V = point 6 with its offset; platform-arl-s.md §3, assessment 05 §3.2)"
+   ],
+   "read": {
+    "P0": {
+     "points_mv": {
+      "57": -50
+     }
+    }
+   },
+   "read_words": {
+    "P0": {
+     "0": "0x00000039",
+     "8": "0xF9A00039"
+    }
+   },
+   "baseline_v": {
+    "P0": {
+     "57": 1.4258
+    }
+   },
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "P0"
+     ],
+     "ratio": 58
+    }
+   ],
+   "expect": {
+    "draft": {
+     "P0": {
+      "ratio": 58,
+      "vt": 1.4258,
+      "vt_auto": true
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": null,
+       "v_target_v": 1.4258,
+       "ratio": 58
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P0",
+      "cpu": 0,
+      "p2": 0,
+      "word": "0x0005B43A"
+     }
+    ],
+    "oc": {
+     "P0": {
+      "ratio": 58,
+      "mode": "adaptive",
+      "target": 1.4258,
+      "v": 1.4258,
+      "clamped_by": null,
+      "not_measured": []
+     }
+    },
+    "voltage_v": {
+     "P0": {
+      "57": 1.3758,
+      "58": 1.4258
+     }
+    },
+    "read_after": {
+     "P0": {
+      "curve_mv": 0,
+      "points_mv": {
+       "57": -49.805
+      },
+      "oc_ratio": 58,
+      "v_target_v": 1.4258
+     }
+    }
+   }
+  },
+  {
+   "id": "oc-new-nonfavored-fill",
+   "title": "P1 (own max 55x) gets an OC point at 58x with nothing typed: target = its own fused top voltage, one word",
+   "evidence": [
+    "[MEASURED lnx 2026-10-19] an OC point is created by ONE word ratio + target: P0 58x word 0x0005B43A (G-241, platform-arl-s.md §3)",
+    "[MEASURED win 2026-10-01] with no target given the word carries the fused 0x09 voltage [19:8], offset not added (registers.md XTU write procedure; planner xtu_word)"
+   ],
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "P1"
+     ],
+     "ratio": 58
+    }
+   ],
+   "expect": {
+    "draft": {
+     "P1": {
+      "ratio": 58,
+      "vt": 1.3047,
+      "vt_auto": true
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P1",
+       "offset": null,
+       "v_target_v": 1.3047,
+       "ratio": 58
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P1",
+      "cpu": 1,
+      "p2": 0,
+      "word": "0x0005383A"
+     }
+    ]
+   }
+  },
+  {
+   "id": "oc-target-below-top-lifted",
+   "title": "an adaptive target below the top point's EFFECTIVE voltage is lifted to it (clamp names the top point)",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/13] an OC target below the top fused point is lifted to it, the top point WITH its offset (target 1.100 V ran 1.1125 V = point 6 with its offset; platform-arl-s.md §3, assessment 05 §3.2)"
+   ],
+   "read": {
+    "EC1": {
+     "oc": {
+      "ratio": 47,
+      "v_target_v": 1.0771,
+      "offset_mv": 0
+     },
+     "points_mv": {
+      "46": -100
+     }
+    }
+   },
+   "read_words": {
+    "EC1": {
+     "0": "0x00044F2F",
+     "6": "0xF340002E"
+    }
+   },
+   "edits": [
+    {
+     "op": "oc_target",
+     "units": [
+      "EC1"
+     ],
+     "v": 1.0
+    }
+   ],
+   "expect": {
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "EC1",
+       "offset": null,
+       "v_target_v": 1.0,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "EC1",
+      "cpu": 12,
+      "p2": 0,
+      "word": "0x0004002F"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 13,
+      "p2": 0,
+      "word": "0x0004002F"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 14,
+      "p2": 0,
+      "word": "0x0004002F"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 15,
+      "p2": 0,
+      "word": "0x0004002F"
+     }
+    ],
+    "oc": {
+     "EC1": {
+      "ratio": 47,
+      "mode": "adaptive",
+      "target": 1.0,
+      "v": 1.03709,
+      "clamped_by": {
+       "ratio": 46,
+       "point": 6
+      },
+      "not_measured": []
+     }
+    }
+   }
+  },
+  {
+   "id": "oc-raise-ratio-and-target-interp",
+   "title": "E OC 47x -> 48x at 1.185 V: two words (voltage first); 47x is interpolated from the top point, whose start (offset or fused top) is NOT MEASURED",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] between the top point and the OC point the voltage is linear (47x = midpoint), measured with the top point at offset 0 (assessment 05 §3.3)",
+    "[UNVERIFIED] whether the line to the OC point starts at the offset or the fused top voltage (assessment 05 §3.3, §3.6 E2)",
+    "[DECOMPILED registers.md Ordering] raising: voltage first"
+   ],
+   "read": {
+    "EC1": {
+     "oc": {
+      "ratio": 47,
+      "v_target_v": 1.0771,
+      "offset_mv": 0
+     },
+     "points_mv": {
+      "46": -100
+     }
+    }
+   },
+   "read_words": {
+    "EC1": {
+     "0": "0x00044F2F",
+     "6": "0xF340002E"
+    }
+   },
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "EC1"
+     ],
+     "ratio": 48
+    },
+    {
+     "op": "oc_target",
+     "units": [
+      "EC1"
+     ],
+     "v": 1.185
+    }
+   ],
+   "expect": {
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "EC1",
+       "offset": null,
+       "v_target_v": 1.185,
+       "ratio": 48
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "EC1",
+      "cpu": 12,
+      "p2": 0,
+      "word": "0x0004BD2F",
+      "stage": "1/2 voltage first"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 12,
+      "p2": 0,
+      "word": "0x0004BD30",
+      "stage": "2/2 full word"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 13,
+      "p2": 0,
+      "word": "0x0004BD2F",
+      "stage": "1/2 voltage first"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 13,
+      "p2": 0,
+      "word": "0x0004BD30",
+      "stage": "2/2 full word"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 14,
+      "p2": 0,
+      "word": "0x0004BD2F",
+      "stage": "1/2 voltage first"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 14,
+      "p2": 0,
+      "word": "0x0004BD30",
+      "stage": "2/2 full word"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 15,
+      "p2": 0,
+      "word": "0x0004BD2F",
+      "stage": "1/2 voltage first"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 15,
+      "p2": 0,
+      "word": "0x0004BD30",
+      "stage": "2/2 full word"
+     }
+    ],
+    "oc": {
+     "EC1": {
+      "ratio": 48,
+      "mode": "adaptive",
+      "target": 1.185,
+      "v": 1.185,
+      "clamped_by": null,
+      "not_measured": []
+     }
+    },
+    "voltage_v": {
+     "EC1": {
+      "46": 1.03709,
+      "47": 1.11105,
+      "48": 1.185
+     }
+    },
+    "not_measured": {
+     "EC1": {
+      "47": [
+       "warn.interp_not_measured"
+      ],
+      "48": []
+     }
+    }
+   }
+  },
+  {
+   "id": "oc-with-curve-not-measured",
+   "title": "a whole-curve offset on a unit with an OC point: the points move (additive), whether the OC target moves is NOT MEASURED (flag, not a number as fact)",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] the P2 = 0 offset [31:21] shifts every point, additive to the per-point offsets (platform-arl-s.md §3; tuning-results.md §5-6)",
+    "[UNVERIFIED] whether a whole-curve offset shifts an OC target (assessment 05 §3.2 mode c/d, §3.6 E5/E6)"
+   ],
+   "read": {
+    "EC1": {
+     "oc": {
+      "ratio": 47,
+      "v_target_v": 1.0771,
+      "offset_mv": 0
+     },
+     "points_mv": {
+      "46": -100
+     }
+    }
+   },
+   "read_words": {
+    "EC1": {
+     "0": "0x00044F2F",
+     "6": "0xF340002E"
+    }
+   },
+   "edits": [
+    {
+     "op": "curve",
+     "units": [
+      "EC1"
+     ],
+     "mv": -20
+    }
+   ],
+   "expect": {
+    "layers": {
+     "EC1": {
+      "curve_mv": -20,
+      "points_mv": {}
+     }
+    },
+    "effective_offset_mv": {
+     "EC1": {
+      "8": -20,
+      "46": -120
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "EC1",
+       "offset": {
+        "kind": "curve",
+        "mv": -20
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "EC1",
+      "cpu": 12,
+      "p2": 0,
+      "word": "0xFD844F2F"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 13,
+      "p2": 0,
+      "word": "0xFD844F2F"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 14,
+      "p2": 0,
+      "word": "0xFD844F2F"
+     },
+     {
+      "unit": "EC1",
+      "cpu": 15,
+      "p2": 0,
+      "word": "0xFD844F2F"
+     }
+    ],
+    "oc": {
+     "EC1": {
+      "ratio": 47,
+      "mode": "adaptive",
+      "target": 1.0771,
+      "v": 1.0771,
+      "clamped_by": null,
+      "not_measured": [
+       "warn.curve_with_oc"
+      ]
+     }
+    },
+    "warnings": [
+     {
+      "code": "CURVE_WITH_OC",
+      "unit": "EC1",
+      "hint": "warn.curve_with_oc"
+     }
+    ]
+   }
+  },
+  {
+   "id": "oc-mode-offset-not-offered",
+   "title": "OC voltage mode 'offset only' is not offered",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 6] only the adaptive OC target is offered until the experiments settle modes a/c/d"
+   ],
+   "edits": [
+    {
+     "op": "oc_mode",
+     "units": [
+      "P0"
+     ],
+     "mode": "offset"
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.oc_mode_not_offered"
+    }
+   }
+  },
+  {
+   "id": "oc-mode-target-offset-not-offered",
+   "title": "OC voltage mode 'target + offset' is not offered",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 6] only the adaptive OC target is offered until the experiments settle modes a/c/d"
+   ],
+   "edits": [
+    {
+     "op": "oc_mode",
+     "units": [
+      "P0"
+     ],
+     "mode": "target_offset"
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.oc_mode_not_offered"
+    }
+   }
+  },
+  {
+   "id": "target-without-oc-point",
+   "title": "a target on a unit with no OC point is refused (it would not be retained)",
+   "evidence": [
+    "[MEASURED lnx 2026-10-11/12] a V target with OC ratio <= top fused ratio is not retained; written as 0 (D-035, G-124, platform-arl-s.md §3)"
+   ],
+   "edits": [
+    {
+     "op": "oc_target",
+     "units": [
+      "P1"
+     ],
+     "v": 1.3
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.target_needs_oc_point"
+    }
+   }
+  },
+  {
+   "id": "middle-ratio-no-oc-point",
+   "title": "P1 (own max 55x) at OC ratio 57 = its fused top: no OC point, no target drafted; 56x runs its own fused point 7 (offset 0), not the -77 mV of 55x",
+   "evidence": [
+    "[MEASURED lnx 2026-10-02; COMMUNITY SkatterBencher] fused points take offsets only (platform-arl-s.md §3)",
+    "[MEASURED lnx 2026-11-11] a 56x point with offset 0 requested the stock voltage (P VID 1.348 V at 56x vs 1.271 V at the undervolted 55x): a point's offset is not inherited by the bins above (tuning-results.md 2026-11-11)",
+    "[MEASURED lnx 2026-10-11/12] a V target with OC ratio <= top fused ratio is not retained; written as 0 (D-035, G-124, platform-arl-s.md §3)"
+   ],
+   "read": {
+    "P1": {
+     "points_mv": {
+      "55": -77
+     }
+    }
+   },
+   "baseline_v": {
+    "P1": {
+     "55": 1.348,
+     "56": 1.348,
+     "57": 1.348
+    }
+   },
+   "baseline_note": "illustrative: the non-favored core's points 7/8 are flat placeholders at its stock 55x VID (favored-cores.md §3); 1.348 V from the 2026-11-11 reading",
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "P1"
+     ],
+     "ratio": 57
+    }
+   ],
+   "expect": {
+    "draft": {
+     "P1": {
+      "ratio": 57,
+      "vt": null,
+      "vt_auto": false
+     }
+    },
+    "intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P1",
+       "offset": null,
+       "v_target_v": null,
+       "ratio": 57
+      }
+     ]
+    },
+    "words": [
+     {
+      "unit": "P1",
+      "cpu": 1,
+      "p2": 0,
+      "word": "0x00000039"
+     }
+    ],
+    "voltage_v": {
+     "P1": {
+      "55": 1.271,
+      "56": 1.348,
+      "57": 1.348
+     }
+    },
+    "effective_offset_mv": {
+     "P1": {
+      "55": -77,
+      "56": 0
+     }
+    }
+   }
+  },
+  {
+   "id": "positive-point-refused",
+   "title": "a positive point offset is refused with its reason",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused"
+   ],
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": 10
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.positive_offset",
+     "values": {
+      "value": 10
+     }
+    },
+    "helper_intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "points",
+        "mv": {
+         "53": 10
+        }
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "helper_refusal": {
+     "code": "REFUSED",
+     "check": "POSITIVE_OFFSET_UNPROVEN",
+     "message_re": "^P0: offset \\+10 mV on the 53x point raises a voltage the helper cannot bound"
+    }
+   }
+  },
+  {
+   "id": "positive-ring-refused",
+   "title": "a positive ring point offset is refused with its reason",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused",
+    "[DOC D-045] the ring OC word (P2 = 0) is BIOS-owned and never written; ring points are offset-only by P2 number (G-212)"
+   ],
+   "edits": [
+    {
+     "op": "ring_point",
+     "point": 2,
+     "mv": 5
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.positive_offset",
+     "values": {
+      "value": 5
+     }
+    }
+   }
+  },
+  {
+   "id": "positive-curve-refused",
+   "title": "a positive whole-curve offset is refused with its reason",
+   "evidence": [
+    "[DOC R-B4 UI rule] extends D-053 item 5 to the whole-curve layer: a positive whole-curve offset is not offered either (the guard's per-unit sum of raises, assessment 05 B-01, is not on main yet)"
+   ],
+   "edits": [
+    {
+     "op": "curve",
+     "units": [
+      "P0"
+     ],
+     "mv": 10
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.positive_offset",
+     "values": {
+      "value": 10
+     }
+    }
+   }
+  },
+  {
+   "id": "offset-below-field",
+   "title": "-1001 mV is below the 11-bit field: refused, not clamped to -1000",
+   "evidence": [
+    "[DOC registers.md] offset field -1000..+999 mV (11 bits); helper canonical_intent refuses outside",
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused"
+   ],
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": -1001
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.below_floor",
+     "values": {
+      "value": -1001,
+      "min": -1000,
+      "unit": "mV"
+     }
+    },
+    "helper_intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": {
+        "kind": "points",
+        "mv": {
+         "53": -1001
+        }
+       },
+       "v_target_v": null,
+       "ratio": null
+      }
+     ]
+    },
+    "helper_refusal": {
+     "code": "BAD_REQUEST",
+     "message_re": "offset\\.mv\\[53\\] -1001 mV is outside the V/F word's -1000\\.\\.999 mV"
+    }
+   }
+  },
+  {
+   "id": "oc-ratio-above-cpu-limit",
+   "title": "an OC ratio above the CPU's 0x01 limit is refused, not stopped at 120",
+   "evidence": [
+    "[MEASURED win 2026-10-01] 0x01 ratio limit 120x, 0x28 - 1 LSB = P 1625 / E 1355 mV on the reference chip (registers.md; the fixture carries the simulator's copy)",
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused"
+   ],
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "P0"
+     ],
+     "ratio": 121
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.above_limit",
+     "values": {
+      "value": 121,
+      "max": 120,
+      "unit": "×"
+     }
+    },
+    "helper_intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": null,
+       "v_target_v": null,
+       "ratio": 121
+      }
+     ]
+    },
+    "helper_refusal": {
+     "code": "REFUSED",
+     "check": "POLICY_RANGE",
+     "message_re": "^P0: ratio 121 is above CPU limit 120x \\(cmd 0x01 \\[7:0\\] fused max OC ratio of a P CPU, registers\\.md\\)\\. Nothing was sent\\.$"
+    }
+   }
+  },
+  {
+   "id": "oc-ratio-not-above-stock",
+   "title": "an OC ratio at or below the unit's stock maximum is not an OC ratio: refused with the floor",
+   "evidence": [
+    "[MEASURED lnx 2026-10-02, 2026-10-11] an OC ratio above the top fused ratio adds one point after the table (platform-arl-s.md §3)"
+   ],
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "EC1"
+     ],
+     "ratio": 45
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.below_floor",
+     "values": {
+      "value": 45,
+      "min": 47,
+      "unit": "×"
+     }
+    }
+   }
+  },
+  {
+   "id": "oc-target-above-cpu-limit",
+   "title": "an OC target above the CPU's 0x28 limit is refused, not clamped",
+   "evidence": [
+    "[MEASURED win 2026-10-01] 0x01 ratio limit 120x, 0x28 - 1 LSB = P 1625 / E 1355 mV on the reference chip (registers.md; the fixture carries the simulator's copy)",
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused"
+   ],
+   "edits": [
+    {
+     "op": "oc_ratio",
+     "units": [
+      "P0"
+     ],
+     "ratio": 58
+    },
+    {
+     "op": "oc_target",
+     "units": [
+      "P0"
+     ],
+     "v": 1.7
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 1,
+     "reason": "refused.above_limit",
+     "values": {
+      "value": 1.7,
+      "max": 1.625,
+      "unit": "V"
+     }
+    },
+    "helper_intent": {
+     "scope": "unit",
+     "rows": [
+      {
+       "target": "P0",
+       "offset": null,
+       "v_target_v": 1.7,
+       "ratio": 58
+      }
+     ]
+    },
+    "helper_refusal": {
+     "code": "REFUSED",
+     "check": "POLICY_RANGE",
+     "message_re": "^P0: OC-point voltage 1700 mV is above CPU limit 1625 mV \\(cmd 0x28 \\[11:0\\] - 1 LSB of a P CPU, XTU's rule, registers\\.md\\)\\. Nothing was sent\\.$"
+    }
+   }
+  },
+  {
+   "id": "turbo-P-rise-refused",
+   "title": "P: 6 busy cores may not run higher than 5 (55x -> 56x refused)",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused",
+    "[MEASURED lnx 2026-10-01] stock turbo tables are non-increasing (assessment 05 §3.4); E bucket core counts 1,2,3,4,6,8,12,16 (registers.md 0x651)"
+   ],
+   "edits": [
+    {
+     "op": "bucket",
+     "kind": "P",
+     "i": 5,
+     "ratio": 56
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.turbo_rise",
+     "values": {
+      "value": 56,
+      "n": 6,
+      "prev": 5,
+      "prevRatio": 55
+     }
+    },
+    "helper_intent": {
+     "turbo": {
+      "P": [
+       57,
+       57,
+       55,
+       55,
+       55,
+       56,
+       55,
+       55
+      ]
+     }
+    },
+    "helper_refusal": {
+     "code": "REFUSED",
+     "check": "TURBO_ORDER",
+     "message_re": "bucket 5 \\(56x\\) is above bucket 4 \\(55x\\): a ratio table may not rise with the active-core count"
+    }
+   }
+  },
+  {
+   "id": "turbo-E-rise-refused",
+   "title": "E: the bucket for 6 busy cores may not run higher than the one for 4 (48x -> 49x refused)",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused",
+    "[MEASURED lnx 2026-10-01] stock turbo tables are non-increasing (assessment 05 §3.4); E bucket core counts 1,2,3,4,6,8,12,16 (registers.md 0x651)"
+   ],
+   "edits": [
+    {
+     "op": "bucket",
+     "kind": "E",
+     "i": 4,
+     "ratio": 49
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "refused.turbo_rise",
+     "values": {
+      "value": 49,
+      "n": 6,
+      "prev": 4,
+      "prevRatio": 48
+     }
+    },
+    "helper_intent": {
+     "turbo": {
+      "E": [
+       48,
+       48,
+       48,
+       48,
+       49,
+       48,
+       48,
+       48
+      ]
+     }
+    },
+    "helper_refusal": {
+     "code": "REFUSED",
+     "check": "TURBO_ORDER",
+     "message_re": "bucket 4 \\(49x\\) is above bucket 3 \\(48x\\): a ratio table may not rise with the active-core count"
+    }
+   }
+  },
+  {
+   "id": "turbo-lower-pulls-right",
+   "title": "lowering a bucket brings the buckets to its right down with it (named), so the table stays non-increasing",
+   "evidence": [
+    "[DOC docs/DECISIONS.md D-053 item 5] positive point/ring offsets removed from the UI; out-of-range typed values refused with the reason; rising turbo tables refused",
+    "[MEASURED lnx 2026-10-01] stock turbo tables are non-increasing (assessment 05 §3.4); E bucket core counts 1,2,3,4,6,8,12,16 (registers.md 0x651)"
+   ],
+   "edits": [
+    {
+     "op": "bucket",
+     "kind": "P",
+     "i": 2,
+     "ratio": 54
+    }
+   ],
+   "expect": {
+    "turbo": {
+     "P": [
+      57,
+      57,
+      54,
+      54,
+      54,
+      54,
+      54,
+      54
+     ]
+    },
+    "moved": [
+     3,
+     4,
+     5,
+     6,
+     7
+    ],
+    "intent": {
+     "turbo": {
+      "P": [
+       57,
+       57,
+       54,
+       54,
+       54,
+       54,
+       54,
+       54
+      ]
+     }
+    }
+   }
+  },
+  {
+   "id": "uvp-on-negative-refused",
+   "title": "with Undervolt Protection known on, a negative offset is refused before Review",
+   "evidence": [
+    "[MEASURED lnx 2026-10-19] Undervolt Protection: the CPU refuses negative offsets with rc 0x13 (registers.md, G-240)"
+   ],
+   "uvp": "on",
+   "edits": [
+    {
+     "op": "point",
+     "units": [
+      "P0"
+     ],
+     "ratio": 53,
+     "mv": -20
+    }
+   ],
+   "expect": {
+    "refusal": {
+     "op": 0,
+     "reason": "locked.uvp"
+    }
+   }
+  }
+ ]
+}

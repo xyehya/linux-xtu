@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en" class="kit">
+<head>
+<meta charset="utf-8">
+<title>linux-xtu · design kit</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/base.css">
+<link rel="stylesheet" href="styles/frame.css">
+<link rel="stylesheet" href="styles/controls.css">
+<link rel="stylesheet" href="styles/tables.css">
+<link rel="stylesheet" href="styles/panels.css">
+<link rel="stylesheet" href="styles/hints.css">
+<link rel="stylesheet" href="styles/plots.css">
+<link rel="stylesheet" href="styles/tips.css">
+<link rel="stylesheet" href="styles/kit.css">
+</head>
+<body>
+<!-- Dev page: every component and state of desktop/DESIGN.md, with the real classes. Copy markup from here. Not linked from the app. -->
+<header class="kit-top">
+  <span class="lx-wordmark" aria-label="linux-xtu"><span class="lx-wm-os">linux</span><span class="lx-wm-dash"></span><span class="lx-wm-tool">xtu</span></span>
+  <span class="kit-top-t">Design kit · direction A “Bench”</span>
+  <span class="kit-top-m">desktop/DESIGN.md · tokens.css · base.css · frame / controls / tables / panels / hints / plots / tips .css</span>
+</header>
+
+<main class="kit-main">
+
+<!-- ============================================================ 01 colour -->
+<section class="kit-sec" id="colour">
+  <h2 class="kit-h"><span class="kit-n">01</span>Colour roles<span class="kit-ref">§3.1</span></h2>
+  <div class="kit-sw">
+    <div><div class="kit-chip c-n0"></div><b>--n0</b><span>#0C0D0F</span><i>bezel, wells, bars</i></div>
+    <div><div class="kit-chip c-n1"></div><b>--n1</b><span>#131417</span><i>panel</i></div>
+    <div><div class="kit-chip c-n2"></div><b>--n2</b><span>#1A1C1F</span><i>band, hover, raised</i></div>
+    <div><div class="kit-chip c-n3"></div><b>--n3</b><span>#24272B</span><i>selected row</i></div>
+    <div><div class="kit-chip c-rule-strong"></div><b>--rule / -strong</b><span>#2C2F34 / #3A3E44</span><i>separators only</i></div>
+    <div><div class="kit-chip c-edge"></div><b>--edge</b><span>#6B7078 · 3.7:1</span><i>control edges</i></div>
+    <div><div class="kit-chip c-fg"></div><b>--fg = meas</b><span>#ECEAE4 · 15.3:1</span><i>measured, read back</i></div>
+    <div><div class="kit-chip c-fg2"></div><b>--fg2</b><span>#B4B6B9 · 9.1:1</span><i>labels, secondary</i></div>
+    <div><div class="kit-chip c-fg3"></div><b>--fg3 = base</b><span>#8F9399 · 6.0:1</span><i>factory, units, hints (floor)</i></div>
+    <div><div class="kit-chip c-set"></div><b>--set</b><span>#3DD2EA · 10.2:1</span><i>your edit, not applied</i></div>
+    <div><div class="kit-chip c-write"></div><b>--write</b><span>#FF7A1F · 7.1:1</span><i>L4: writes the CPU</i></div>
+    <div><div class="kit-chip c-run"></div><b>--run</b><span>#ECEAE4</span><i>L3: starts a load</i></div>
+    <div><div class="kit-chip c-ok"></div><b>--ok</b><span>#52D394 · 9.7:1</span><i>status only</i></div>
+    <div><div class="kit-chip c-warn"></div><b>--warn</b><span>#F2B53C · 10.0:1</span><i>status only</i></div>
+    <div><div class="kit-chip c-fault"></div><b>--fault</b><span>#FF6259 · 6.3:1</span><i>status, refusals</i></div>
+    <div><div class="kit-chip c-ch-p"></div><b>--ch-p</b><span>#F2CD5E</span><i>P trace (plots only)</i><div class="kit-ramp"><i class="r-p0"></i><i class="r-p1"></i><i class="r-p2"></i><i class="r-p3"></i><i class="r-p4"></i><i class="r-p5"></i><i class="r-p6"></i><i class="r-p7"></i></div></div>
+    <div><div class="kit-chip c-ch-e"></div><b>--ch-e</b><span>#A994FF</span><i>E trace (plots only)</i><div class="kit-ramp"><i class="r-e0"></i><i class="r-e1"></i><i class="r-e2"></i><i class="r-e3"></i></div></div>
+    <div><div class="kit-chip c-ch-r"></div><b>--ch-r</b><span>#F083C6</span><i>ring trace (plots only)</i></div>
+  </div>
+  <p class="kit-mt lx-dim">The value grammar in one line: <span data-v="base" class="lx-mono">1.042</span> factory · <span data-v="meas" class="lx-mono">1.042</span> measured / read back · <span data-v="set" class="lx-mono">1.022</span> your edit · <span class="lx-mono">Apply</span> in orange only where the CPU is written.</p>
+</section>
+
+<!-- ============================================================ 02 type -->
+<section class="kit-sec" id="type">
+  <h2 class="kit-h"><span class="kit-n">02</span>Type<span class="kit-ref">§3.3 · IBM Plex Sans 400/500/600 · Plex Mono 400/500</span></h2>
+  <div class="kit-type">
+    <span class="kit-cap">2xl 26/32 · 600</span><span class="t-2xl">Tips — read this first</span>
+    <span class="kit-cap">mono 26/32 · 500</span><span class="t-mono-lg">04:37 <span class="lx-unit">of 15:00</span></span>
+    <span class="kit-cap">xl 18/24 · 600</span><span class="t-xl">P0 <span class="lx-fav">★</span></span>
+    <span class="kit-cap">lg 15/20 · 600</span><span class="t-lg">Tune</span>
+    <span class="kit-cap">md 13/18 · 400</span><span class="t-md">Body text, labels, table cells and controls. <span class="lx-mono">1.042 V · −20 mV · 48× · 0x64F</span></span>
+    <span class="kit-cap">sm 12/16 · 400</span><span class="t-sm lx-dim">Hints, units, column headers, tags, the context line.</span>
+    <span class="kit-cap">xs 11/14 · 600 caps</span><span class="lx-caps lx-dim">V/F curve · P-core — band captions only</span>
+    <span class="kit-cap">read 14/22 · 400</span><span class="t-read">Long-form reading on the Tips screen only. Seventy characters a line at most, so the eye finds the next line without effort.</span>
+  </div>
+</section>
+
+<!-- ============================================================ 03 frame -->
+<section class="kit-sec" id="frame">
+  <h2 class="kit-h"><span class="kit-n">03</span>Frame<span class="kit-ref">§4 · top 32 · header 32 · context 24 · pending 32 · readout 28</span></h2>
+  <div class="kit-frame">
+    <header class="lx-top">
+      <span class="lx-wordmark" aria-label="linux-xtu"><span class="lx-wm-os">linux</span><span class="lx-wm-dash"></span><span class="lx-wm-tool">xtu</span></span>
+      <span class="lx-top-sep"></span>
+      <div class="lx-anns">
+        <button class="lx-ann" type="button"><span class="lx-pip" data-pip="ok"></span>Helper</button>
+        <button class="lx-ann" type="button"><span class="lx-pip" data-pip="ok"></span>Writes</button>
+        <button class="lx-ann" type="button" data-state="unknown">UVP ?</button>
+      </div>
+      <span class="lx-spacer"></span>
+      <div class="lx-cluster"><span class="lx-cluster-k">Accepted</span><span class="lx-cluster-v">differs · 3</span><button class="lx-btn" type="button">Restore accepted…</button></div>
+      <span class="lx-top-sep"></span>
+      <div class="lx-cluster"><span class="lx-cluster-k">Read</span><span class="lx-cluster-v">19:53:03</span><button class="lx-btn lx-btn--l1" type="button">Read<span class="lx-cost">132 req</span></button></div>
+      <span class="lx-top-sep"></span>
+      <div class="lx-cluster"><span class="lx-cluster-k">Mbx</span><span class="lx-cluster-v">6</span></div>
+    </header>
+    <div class="lx-head">
+      <span class="lx-head-t">Tune</span>
+      <div class="lx-tabs" role="tablist">
+        <button role="tab" type="button" aria-selected="true">Cores<span class="lx-mark"></span></button>
+        <button role="tab" type="button" aria-selected="false">Frequency</button>
+        <button role="tab" type="button" aria-selected="false">Power<span class="lx-mark"></span></button>
+        <button role="tab" type="button" aria-selected="false">Ring &amp; uncore</button>
+      </div>
+      <div class="lx-head-end"><span class="lx-tag lx-tag--persist">mailbox · cold boot clears</span></div>
+    </div>
+    <div class="kit-pad lx-dim">… work area: panels tile here (§4.2) …</div>
+    <div class="lx-ctx">
+      <span class="lx-ctx-k">Point offset<span class="lx-term">48×</span></span>
+      <span class="lx-ctx-t">Millivolts added to this point’s factory voltage. Lower runs cooler; too low gives silent wrong results under load.</span>
+      <span class="lx-ctx-end"><button class="lx-btn lx-btn--l0" type="button"><kbd>F1</kbd>Tips</button><span class="lx-seg"><button type="button" aria-pressed="true">Hints on</button><button type="button" aria-pressed="false">Quiet</button></span></span>
+    </div>
+    <div class="lx-pend">
+      <span class="lx-pend-n">3 edits</span>
+      <span class="lx-pend-list">P0 pt4 48× 0<span class="lx-arrow">→</span>−20 mV<span class="lx-sep">|</span>P0 pt5 53× 0<span class="lx-arrow">→</span>−15 mV<span class="lx-sep">|</span>PL1 250<span class="lx-arrow">→</span>200 W</span>
+      <button class="lx-btn lx-btn--l0" type="button">Discard all</button>
+      <button class="lx-btn" type="button">Review 3 edits…</button>
+    </div>
+    <footer class="lx-read">
+      <div class="lx-ro"><span class="lx-ro-k">PKG</span><span class="lx-ro-v lx-w5">55.2</span><span class="lx-ro-u">W</span><svg class="lx-spark" viewBox="0 0 44 14" aria-hidden="true"><polyline points="0,9 4,7 8,8 12,4 16,5 20,9 24,10 28,6 32,3 36,5 40,8 44,7"/></svg></div>
+      <div class="lx-ro"><span class="lx-ro-k">CLK</span><span class="lx-ro-v">5.50</span><span class="lx-ro-u">GHz</span></div>
+      <div class="lx-ro"><span class="lx-ro-k">HOT</span><span class="lx-ro-v">57</span><span class="lx-ro-u">°C</span><svg class="lx-spark" viewBox="0 0 44 14" aria-hidden="true"><polyline points="0,10 4,10 8,9 12,9 16,8 20,8 24,7 28,7 32,6 36,7 40,6 44,6"/></svg></div>
+      <div class="lx-ro"><span class="lx-ro-k">VCORE</span><span class="lx-ro-v">1.109</span><span class="lx-ro-u">V</span></div>
+      <div class="lx-ro"><span class="lx-ro-k">CORE</span><span class="lx-ro-na">n/a</span></div>
+      <div class="lx-ro"><span class="lx-ro-k">DRAM</span><span class="lx-ro-na">n/a</span></div>
+      <div class="lx-read-end">
+        <span class="lx-cluster-k">Limits</span>
+        <button class="lx-ann" type="button" data-state="lit-warn">PL1 <span class="lx-duty">30%</span></button>
+        <button class="lx-ann" type="button">PL2</button>
+        <button class="lx-ann" type="button">PL4</button>
+        <button class="lx-ann" type="button">Therm</button>
+        <button class="lx-ann" type="button">VR</button>
+        <button class="lx-ann" type="button" data-state="lit-info">Turbo</button>
+      </div>
+    </footer>
+  </div>
+
+  <h3 class="kit-sub">Rail: text soft-keys, digit = Alt+digit; Tips pinned at the foot (F1)</h3>
+  <div class="kit-frame kit-railbox">
+    <nav class="lx-rail" aria-label="Screens">
+      <a class="lx-key" href="#frame">Overview<span class="lx-key-d">1</span></a>
+      <a class="lx-key" href="#frame" aria-current="page">Tune<span class="lx-key-d">2</span></a>
+      <div class="lx-rail-gap"></div>
+      <a class="lx-key" href="#frame">Stress<span class="lx-key-d">3</span></a>
+      <a class="lx-key" href="#frame">Curves<span class="lx-key-d">4</span></a>
+      <div class="lx-rail-gap"></div>
+      <a class="lx-key" href="#frame">Profiles<span class="lx-key-d">5</span></a>
+      <div class="lx-rail-gap"></div>
+      <a class="lx-key" href="#frame">Audit<span class="lx-key-d">6</span></a>
+      <a class="lx-key" href="#frame">System<span class="lx-key-d">7</span></a>
+      <div class="lx-rail-end"><a class="lx-key" href="#frame">Tips<span class="lx-key-d">F1</span></a></div>
+    </nav>
+    <div class="kit-railwork">The active key is a tab into the panel: it takes the panel colour and covers the rail’s rule.</div>
+  </div>
+</section>
+
+<!-- ============================================================ 04 buttons -->
+<section class="kit-sec" id="buttons">
+  <h2 class="kit-h"><span class="kit-n">04</span>Button ladder<span class="kit-ref">§5.1 · risk is visible</span></h2>
+  <div class="kit-row kit-row--c">
+    <div class="kit-cell"><span class="kit-cap">L0 quiet · navigate, close, discard</span><div class="kit-row kit-row--c"><button class="lx-btn lx-btn--l0" type="button">Close</button><button class="lx-btn lx-btn--l0" type="button">Discard</button></div></div>
+    <div class="kit-cell"><span class="kit-cap">L1 read · cost tag</span><button class="lx-btn lx-btn--l1" type="button">Read<span class="lx-cost">132 req</span></button></div>
+    <div class="kit-cell"><span class="kit-cap">L2 local · plan, file, copy</span><div class="kit-row kit-row--c"><button class="lx-btn" type="button">Review 3 edits…</button><button class="lx-btn" type="button">Save profile…</button></div></div>
+    <div class="kit-cell"><span class="kit-cap">L3 run · starts a load</span><button class="lx-btn lx-btn--l3" type="button">Start stress<span class="lx-cost">5 min</span></button></div>
+    <div class="kit-cell"><span class="kit-cap">L4 write · CPU registers</span><button class="lx-btn lx-btn--l4" type="button">Apply 3 writes</button></div>
+  </div>
+  <h3 class="kit-sub">States</h3>
+  <div class="kit-row">
+    <div class="kit-cell"><span class="kit-cap">busy L1 · progress rule</span><button class="lx-btn lx-btn--l1 kit-p35" type="button" aria-busy="true">Reading 46 / 132</button></div>
+    <div class="kit-cell"><span class="kit-cap">busy L4 · writing</span><button class="lx-btn lx-btn--l4 kit-p62" type="button" aria-busy="true">Writing 2 of 3</button></div>
+    <div class="kit-cell kit-w360"><span class="kit-cap">disabled + why (always)</span><div><button class="lx-btn lx-btn--l4" type="button" disabled>Apply 3 writes</button><span class="lx-why"><b>Locked</b>You changed PL1 after this review. Review again to plan 180 W.</span></div></div>
+    <div class="kit-cell"><span class="kit-cap">inline confirm (Read with edits pending)</span><span class="lx-confirm" role="group" aria-label="Confirm read"><span class="lx-confirm-t">Read drops 2 edits.</span><button class="lx-btn" type="button">Read and drop</button><button class="lx-btn lx-btn--l0" type="button">Keep edits</button></span></div>
+    <div class="kit-cell kit-w360"><span class="kit-cap">disabled L3 + why</span><div><button class="lx-btn lx-btn--l3" type="button" disabled>Start stress<span class="lx-cost">5 min</span></button><span class="lx-why"><b>Unavailable</b>A curve measurement is running. One long operation at a time.</span></div></div>
+  </div>
+</section>
+
+<!-- ============================================================ 05 fields -->
+<section class="kit-sec" id="fields">
+  <h2 class="kit-h"><span class="kit-n">05</span>Numeric field and stepper<span class="kit-ref">§5.2 · width in ch · never clamps silently</span></h2>
+  <div class="kit-row">
+    <div class="kit-cell"><span class="kit-cap">idle</span><span class="lx-field"><span class="lx-in lx-w6"><input value="0" aria-label="Offset at 30×"></span><span class="lx-field-u">mV</span></span></div>
+    <div class="kit-cell"><span class="kit-cap">focus</span><span class="lx-field"><span class="lx-in lx-w6"><input value="−10" aria-label="Offset at 20×" autofocus></span><span class="lx-field-u">mV</span></span></div>
+    <div class="kit-cell"><span class="kit-cap">set (edited)</span><span class="lx-field" data-state="set"><span class="lx-in lx-w6"><input value="−20" aria-label="Offset at 48×"></span><span class="lx-field-u">mV</span></span></div>
+    <div class="kit-cell"><span class="kit-cap">mixed (several units)</span><span class="lx-field" data-state="mixed"><span class="lx-in lx-w8"><input value="" placeholder="−20…0" aria-label="Whole-curve offset"></span><span class="lx-field-u">mV</span></span></div>
+    <div class="kit-cell"><span class="kit-cap">stepper (single fields)</span><span class="lx-field"><span class="lx-in lx-w5"><button class="lx-step" type="button" aria-label="Lower">−</button><input value="250" aria-label="PL1"><button class="lx-step" type="button" aria-label="Raise">+</button></span><span class="lx-field-u">W</span></span></div>
+    <div class="kit-cell"><span class="kit-cap">stepper, set</span><span class="lx-field" data-state="set"><span class="lx-in lx-w5"><button class="lx-step" type="button" aria-label="Lower">−</button><input value="200" aria-label="PL1"><button class="lx-step" type="button" aria-label="Raise">+</button></span><span class="lx-field-u">W</span></span></div>
+  </div>
+  <div class="kit-row kit-mt">
+    <div class="kit-cell kit-w360"><span class="kit-cap">refused · typed text kept, reason below</span><span class="lx-field" data-state="refused"><span class="lx-in lx-w6"><input value="-5000" aria-label="Offset at 53×" aria-invalid="true"></span><span class="lx-field-u">mV</span></span><span class="lx-why" data-kind="refused"><b>Refused</b>−5000 is below the field’s floor of −1000 mV. Nothing changed.</span></div>
+    <div class="kit-cell kit-w360"><span class="kit-cap">disabled · reason beside it</span><span class="lx-field" data-state="disabled"><span class="lx-in lx-w6"><input value="0" aria-label="Offset at 55×" disabled></span><span class="lx-field-u">mV</span></span><span class="lx-why"><b>Locked</b>Undervolt Protection is on in the BIOS: the CPU refuses negative offsets.</span></div>
+    <div class="kit-cell kit-w360"><span class="kit-cap">reading · locked until the read lands</span><span class="lx-field" data-state="reading"><span class="lx-in lx-w6"><input value="—" aria-label="Offset at 56×" disabled></span><span class="lx-field-u">mV</span></span><span class="lx-why"><b>Reading</b>Edits wait until the read finishes.</span></div>
+  </div>
+  <h3 class="kit-sub">Text, select, checkbox</h3>
+  <div class="kit-row kit-row--c">
+    <input class="lx-text lx-mono" placeholder="profile-name" aria-label="Profile name">
+    <select class="lx-select" aria-label="Curve"><option>stock · 2026-10-18 · baseline</option><option>tuned · 2026-10-20</option></select>
+    <label class="kit-row kit-row--c"><input class="lx-check" type="checkbox" checked> <span>P0</span></label>
+    <label class="kit-row kit-row--c"><input class="lx-check" type="checkbox"> <span>EC1</span></label>
+  </div>
+</section>
+
+<!-- ============================================================ 06 choice -->
+<section class="kit-sec" id="choice">
+  <h2 class="kit-h"><span class="kit-n">06</span>Segmented and tabs<span class="kit-ref">§5.3 · §5.4</span></h2>
+  <div class="kit-row kit-row--c">
+    <div class="kit-cell"><span class="kit-cap">segmented · one joined control</span><span class="lx-seg"><button type="button" aria-pressed="false">1 min</button><button type="button" aria-pressed="true">5 min</button><button type="button" aria-pressed="false">15 min</button><button type="button" aria-pressed="false">60 min</button></span></div>
+    <div class="kit-cell"><span class="kit-cap">with a disabled option</span><span class="lx-seg"><button type="button" aria-pressed="true">CPU</button><button type="button" aria-pressed="false">Memory</button><button type="button" disabled>GPU</button></span></div>
+    <div class="kit-cell"><span class="kit-cap">tabs (sub-screens)</span><div class="lx-tabs kit-stage" role="tablist"><button role="tab" type="button" aria-selected="false">Chart</button><button role="tab" type="button" aria-selected="true">Table</button><button role="tab" type="button" aria-selected="false">Library</button></div></div>
+  </div>
+</section>
+
+<!-- ============================================================ 07 tags + annunciators -->
+<section class="kit-sec" id="tags">
+  <h2 class="kit-h"><span class="kit-n">07</span>Tags and annunciators<span class="kit-ref">§5.5 · §5.6 · dark when idle, lit when active</span></h2>
+  <div class="kit-row kit-row--c">
+    <span class="lx-tag">saved</span>
+    <span class="lx-tag lx-tag--ok">complete</span>
+    <span class="lx-tag lx-tag--warn">no baseline</span>
+    <span class="lx-tag lx-tag--fault">refused</span>
+    <span class="lx-tag lx-tag--set">edited</span>
+    <span class="lx-tag lx-tag--mono">OC slot</span>
+    <span class="lx-tag lx-tag--persist">mailbox · cold boot clears</span>
+    <span class="lx-tag lx-tag--persist">runtime · reboot clears</span>
+  </div>
+  <div class="kit-row kit-row--c kit-mt">
+    <div class="kit-cell"><span class="kit-cap">unlit</span><span class="lx-ann">PL2</span></div>
+    <div class="kit-cell"><span class="kit-cap">unknown</span><span class="lx-ann" data-state="unknown">UVP ?</span></div>
+    <div class="kit-cell"><span class="kit-cap">lit warn + duty</span><span class="lx-ann" data-state="lit-warn">PL1 <span class="lx-duty">30%</span></span></div>
+    <div class="kit-cell"><span class="kit-cap">lit fault</span><span class="lx-ann" data-state="lit-fault">Therm</span></div>
+    <div class="kit-cell"><span class="kit-cap">lit info (normal)</span><span class="lx-ann" data-state="lit-info">Turbo</span></div>
+    <div class="kit-cell"><span class="kit-cap">blocking condition</span><span class="lx-ann" data-state="lit-warn">UVP on</span></div>
+    <div class="kit-cell"><span class="kit-cap">pip ok</span><span class="lx-ann"><span class="lx-pip" data-pip="ok"></span>Helper</span></div>
+    <div class="kit-cell"><span class="kit-cap">pip warn (busy)</span><span class="lx-ann"><span class="lx-pip" data-pip="warn"></span>Helper</span></div>
+    <div class="kit-cell"><span class="kit-cap">pip fault</span><span class="lx-ann"><span class="lx-pip" data-pip="fault"></span>Helper</span></div>
+    <div class="kit-cell"><span class="kit-cap">pip off</span><span class="lx-ann"><span class="lx-pip"></span>Helper</span></div>
+    <div class="kit-cell"><span class="kit-cap">read-only mode</span><span class="lx-ann" data-state="lit-warn">Read-only</span></div>
+  </div>
+</section>
+
+<!-- ============================================================ 08 tables -->
+<section class="kit-sec" id="tables">
+  <h2 class="kit-h"><span class="kit-n">08</span>Tables<span class="kit-ref">§5.8 · mono, right-aligned, unit in the header, 24 px rows</span></h2>
+  <div class="kit-grid2">
+    <div class="lx-panel kit-panel-demo">
+      <div class="lx-band"><span class="lx-band-t">Units</span><span class="lx-band-m">Ctrl/Shift-click selects several</span></div>
+      <table class="lx-tbl lx-tbl--fill">
+        <thead><tr><th>Unit</th><th class="lx-n">Top<span class="lx-hu">×</span></th><th class="lx-n">OC<span class="lx-hu">×</span></th><th class="lx-n">Offset<span class="lx-hu">mV</span></th><th>Busy</th><th class="lx-n">VID<span class="lx-hu">V</span></th><th class="lx-m"></th></tr></thead>
+        <tbody>
+          <tr class="lx-grp"><th colspan="7">P-cores<span class="lx-grp-n">8</span></th></tr>
+          <tr class="lx-click" aria-selected="true" data-state="edit"><td class="lx-k">P0 <span class="lx-fav">★</span><span class="lx-sub">cpu 0</span></td><td class="lx-n" data-v="base">57</td><td class="lx-n" data-v="none">—</td><td class="lx-n" data-v="set">−20</td><td><span class="lx-bar kit-p62"></span><span class="lx-mono">62</span></td><td class="lx-n">1.281</td><td class="lx-m"><span class="lx-mark"></span></td></tr>
+          <tr class="lx-click"><td class="lx-k">P1<span class="lx-sub">cpu 1</span></td><td class="lx-n" data-v="base">55</td><td class="lx-n" data-v="none">—</td><td class="lx-n">0</td><td><span class="lx-bar kit-p35"></span><span class="lx-mono">35</span></td><td class="lx-n">1.237</td><td class="lx-m"></td></tr>
+          <tr class="lx-grp"><th colspan="7">E-clusters<span class="lx-grp-n">4 CPUs share one ratio and one curve</span></th></tr>
+          <tr class="lx-click"><td class="lx-k">EC0<span class="lx-sub">8–11</span></td><td class="lx-n" data-v="base">46</td><td class="lx-n">48</td><td class="lx-n">−40</td><td><span class="lx-bar"></span><span class="lx-mono">0</span></td><td class="lx-n">1.159</td><td class="lx-m"></td></tr>
+          <tr class="lx-grp"><th colspan="7">Ring</th></tr>
+          <tr class="lx-click"><td class="lx-k">Ring</td><td class="lx-n" data-v="base">39</td><td class="lx-n" data-v="none">—</td><td class="lx-n">0</td><td><span class="lx-na">—</span></td><td class="lx-n"><span class="lx-na">n/a</span></td><td class="lx-m"></td></tr>
+        </tbody>
+      </table>
+      <div class="lx-tfoot-note">Top = factory top ratio · Offset = the deepest point offset · VID n/a for the ring: no per-ring VID telemetry.</div>
+    </div>
+
+    <div class="lx-panel kit-panel-demo">
+      <div class="lx-band"><span class="lx-band-t">V/F points · P0</span><span class="lx-band-m">whole-curve <span class="lx-mono">−10 mV</span> adds to each point</span></div>
+      <table class="lx-tbl lx-tbl--fill">
+        <thead><tr><th class="lx-n">Pt</th><th class="lx-n">Ratio</th><th class="lx-n">Factory<span class="lx-hu">V</span></th><th class="lx-n lx-f">Offset<span class="lx-hu">mV</span></th><th class="lx-n">Now<span class="lx-hu">V</span></th><th class="lx-n">After<span class="lx-hu">V</span><span class="lx-clamp"></span></th><th class="lx-n">Δ<span class="lx-hu">mV</span></th></tr></thead>
+        <tbody>
+          <tr><td class="lx-n">3</td><td class="lx-n">30×</td><td class="lx-n" data-v="base">0.816</td><td class="lx-f"><span class="lx-field"><span class="lx-in lx-w6"><input value="0" aria-label="Offset at 30×"></span></span></td><td class="lx-n">0.806</td><td class="lx-n">0.806<span class="lx-clamp"></span></td><td class="lx-n lx-dim">·</td></tr>
+          <tr data-state="edit"><td class="lx-n">4</td><td class="lx-n">48×</td><td class="lx-n" data-v="base">1.042</td><td class="lx-f"><span class="lx-field" data-state="set"><span class="lx-in lx-w6"><input value="−20" aria-label="Offset at 48×"></span></span></td><td class="lx-n">1.032</td><td class="lx-n" data-v="set">1.012<span class="lx-clamp"></span></td><td class="lx-n" data-v="set">−20</td></tr>
+          <tr><td class="lx-n">5</td><td class="lx-n">53×</td><td class="lx-n" data-v="base">1.216</td><td class="lx-f"><span class="lx-field"><span class="lx-in lx-w6"><input value="−19.5" aria-label="Offset at 53×"></span></span></td><td class="lx-n">1.187</td><td class="lx-n">1.187<span class="lx-clamp"></span></td><td class="lx-n lx-dim">·</td></tr>
+          <tr><td class="lx-n">7</td><td class="lx-n">56×</td><td class="lx-n" data-v="base">1.376</td><td class="lx-f"><span class="lx-field"><span class="lx-in lx-w6"><input value="0" aria-label="Offset at 56×"></span></span></td><td class="lx-n">1.366</td><td class="lx-n">1.366<span class="lx-clamp"></span></td><td class="lx-n lx-dim">·</td></tr>
+          <tr data-state="edit"><td class="lx-n">8</td><td class="lx-n">57×</td><td class="lx-n" data-v="base">1.429</td><td class="lx-f"><span class="lx-field" data-state="set"><span class="lx-in lx-w6"><input value="−120" aria-label="Offset at 57×"></span></span></td><td class="lx-n">1.419</td><td class="lx-n" data-v="set">1.366<span class="lx-clamp">↑</span></td><td class="lx-n" data-v="set">−53</td></tr>
+          <tr class="lx-why-row"><td colspan="7"><span class="lx-why" data-kind="warn"><b>Clamped</b>The CPU keeps each point at or above the one below, so 57× runs at the 56× voltage (1.366 V), not 1.299 V.</span></td></tr>
+        </tbody>
+      </table>
+      <div class="lx-tfoot-note">Offset field <span class="lx-mono">−1000…0 mV</span> · Now = factory + the offsets the CPU holds (from the read) · After = with your edits.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 09 panels -->
+<section class="kit-sec" id="panels">
+  <h2 class="kit-h"><span class="kit-n">09</span>Panels, facts and boxes<span class="kit-ref">§5.9 · ruled, not carded</span></h2>
+  <div class="kit-grid2">
+    <div class="lx-tiles lx-split-2 kit-panel-demo">
+      <div class="lx-panel">
+        <div class="lx-band"><span class="lx-band-t">Limits</span><span class="lx-band-m">read from this CPU</span><span class="lx-band-end"><button class="lx-q" type="button" aria-expanded="false" aria-label="About limits">?</button></span></div>
+        <div class="lx-panel-b">
+          <dl class="lx-kv">
+            <dt>CPU max voltage, P</dt><dd class="lx-mono">1.625 V</dd>
+            <dt>OC ratio limit, P</dt><dd class="lx-mono">120×</dd>
+            <dt>Offset field</dt><dd class="lx-mono">−1000…+999 mV</dd>
+            <dt>Package power</dt><dd class="lx-na">n/a · Read first</dd>
+          </dl>
+        </div>
+      </div>
+      <div class="lx-panel">
+        <div class="lx-band"><span class="lx-band-t">Helper</span><span class="lx-band-end"><button class="lx-btn lx-btn--l1" type="button">Re-run<span class="lx-cost">0 req</span></button></span></div>
+        <div class="lx-panel-b">
+          <dl class="lx-kv">
+            <dt>Link</dt><dd>connected · simulated</dd>
+            <dt>State</dt><dd>idle</dd>
+            <dt>Mailbox this boot</dt><dd class="lx-mono">6 / 100000</dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+    <div class="kit-cell">
+      <div class="lx-box lx-box--fault"><span class="lx-box-t">Refused by the CPU: Undervolt Protection</span>The CPU answered rc 0x13 to the first negative offset; nothing was written. Turn Undervolt Protection off in the BIOS to undervolt.</div>
+      <div class="lx-box lx-box--warn"><span class="lx-box-t">A quick screen, not an acceptance test</span>It finds a bad setting fast. It cannot show a setting is stable: run a long self-checking load before you trust it.</div>
+      <div class="lx-box lx-box--ok"><span class="lx-box-t">Applied · 3 writes read back equal</span>The CPU now holds your edits until the next cold boot.</div>
+      <div class="lx-box"><span class="lx-box-t">Nothing here is permanent</span>A cold boot brings back the BIOS values. A warm restart can keep some V/F offsets, so read after every boot.</div>
+      <details class="lx-notes"><summary>3 plan notes · 1 warning</summary><ul><li>No stock baseline curve: predictions use factory points only.</li><li>Point 8 will be clamped up to point 7 by the CPU.</li><li>An OC ratio cannot be removed until a cold boot.</li></ul></details>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 10 hints -->
+<section class="kit-sec" id="hints">
+  <h2 class="kit-h"><span class="kit-n">10</span>Hints<span class="kit-ref">§6 · in the flow, never covering the work</span></h2>
+  <h3 class="kit-sub">Context line · focused control / idle</h3>
+  <div class="kit-stage">
+    <div class="lx-ctx"><span class="lx-ctx-k">Long-term limit<span class="lx-term">PL1</span></span><span class="lx-ctx-t">Watts the package may average over the time window. Lower = cooler and slower under long loads.</span><span class="lx-ctx-end"><button class="lx-btn lx-btn--l0" type="button"><kbd>F1</kbd>Tips</button></span></div>
+    <div class="lx-ctx" data-idle="true"><span class="lx-ctx-k">Cores</span><span class="lx-ctx-t">Pick a unit, edit its V/F points, then Review. Nothing reaches the CPU before Apply.</span><span class="lx-ctx-end"><button class="lx-btn lx-btn--l0" type="button"><kbd>F1</kbd>Tips</button></span></div>
+  </div>
+  <div class="kit-grid2 kit-mt">
+    <div class="kit-cell">
+      <span class="kit-cap">plain label, expert term second · “?” collapsed</span>
+      <div><span class="lx-lbl">Long-term limit</span><span class="lx-term">PL1</span><button class="lx-q" type="button" aria-expanded="false" aria-controls="kit-more-1" aria-label="About PL1">?</button></div>
+      <span class="kit-cap kit-mt">“?” expanded in place</span>
+      <div><span class="lx-lbl">Whole-curve offset</span><span class="lx-term">P2 = 0 word</span><button class="lx-q" type="button" aria-expanded="true" aria-controls="kit-more-2" aria-label="About the whole-curve offset">?</button></div>
+      <div class="lx-more" id="kit-more-2"><p><span class="lx-more-t">It adds to every point offset.</span> A whole-curve offset of −10 mV and a point offset of −20 mV give −30 mV at that point. Use it to move a unit’s whole curve, then trim single points.</p><p><button class="lx-link" type="button">More in Tips › Your first undervolt</button></p></div>
+    </div>
+    <div class="kit-cell">
+      <span class="kit-cap">why lines · refused / locked / warning</span>
+      <span class="lx-why" data-kind="refused"><b>Refused</b>A table may not rise with more active cores: 3 active is 55×, so 4 active can be at most 55×.</span>
+      <span class="lx-why"><b>Locked</b>The power limit register is locked until the next reset (MSR 0x610 bit 63).</span>
+      <span class="lx-why" data-kind="warn"><b>Large step</b>−150 mV in one edit. Most chips need far less; consider −10 to −20 mV steps.</span>
+      <span class="kit-cap kit-mt">teaching empty state</span>
+      <div class="lx-empty">
+        <span class="lx-empty-t">No read yet</span>
+        <p class="lx-teach">Tune edits a copy of what the CPU holds now. Read it first: the app asks the CPU for every V/F point, ratio and table.</p>
+        <div class="lx-empty-act"><button class="lx-btn lx-btn--l1" type="button">Read<span class="lx-cost">132 req</span></button><span class="lx-teach-cost">About 1 s. Changes nothing.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 11 states -->
+<section class="kit-sec" id="states">
+  <h2 class="kit-h"><span class="kit-n">11</span>Loading and disconnected<span class="kit-ref">§5.12 · the structure stays</span></h2>
+  <div class="kit-grid2">
+    <div class="lx-panel kit-panel-demo">
+      <div class="lx-band"><span class="lx-band-t">V/F points · P3</span><span class="lx-band-m">Reading <span class="lx-mono">46 / 132</span></span></div>
+      <div class="lx-progress kit-p35"></div>
+      <table class="lx-tbl lx-tbl--fill">
+        <thead><tr><th class="lx-n">Pt</th><th class="lx-n">Ratio</th><th class="lx-n">Factory<span class="lx-hu">V</span></th><th class="lx-n">Offset<span class="lx-hu">mV</span></th><th class="lx-n">Now<span class="lx-hu">V</span></th></tr></thead>
+        <tbody>
+          <tr><td class="lx-n">1</td><td class="lx-n">8×</td><td class="lx-n lx-dim">—</td><td class="lx-n lx-dim">—</td><td class="lx-n lx-dim">—</td></tr>
+          <tr><td class="lx-n">2</td><td class="lx-n">20×</td><td class="lx-n lx-dim">—</td><td class="lx-n lx-dim">—</td><td class="lx-n lx-dim">—</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="lx-panel kit-panel-demo lx-offline">
+      <div class="lx-band"><span class="lx-band-t">Setup</span><span class="lx-band-m">helper not installed</span></div>
+      <div class="lx-panel-b">
+        <div class="lx-empty">
+          <span class="lx-empty-t">Install the helper once</span>
+          <p>The app reads and writes the CPU through a small root helper. It never runs sudo itself.</p>
+          <pre class="lx-box lx-mono">sudo ./install.sh</pre>
+          <div class="lx-empty-act"><button class="lx-btn" type="button">Copy command</button><button class="lx-btn lx-btn--l1" type="button">Retry<span class="lx-cost">0 req</span></button></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 12 commit sheet -->
+<section class="kit-sec" id="sheet">
+  <h2 class="kit-h"><span class="kit-n">12</span>Commit sheet (Review)<span class="kit-ref">§5.10 · diff first, one L4 button</span></h2>
+  <div class="kit-sheet-host">
+    <div class="kit-under">… work area under the sheet; the pending row is hidden while the sheet is open …</div>
+    <section class="lx-sheet" data-open="true" aria-label="Review">
+      <div class="lx-sheet-head">
+        <span class="lx-sheet-t">Review</span>
+        <span class="lx-band-m">3 edits → <span class="lx-mono">3 writes</span> · V/F points, power limits</span>
+        <span class="lx-tag lx-tag--ok">plan ready</span>
+        <span class="lx-band-end"><span class="lx-band-m">expires <span class="lx-mono">20:03</span></span><button class="lx-btn lx-btn--l0" type="button">Close</button></span>
+      </div>
+      <div class="lx-sheet-b">
+        <div class="lx-sheet-sec">
+          <table class="lx-tbl lx-tbl--fill lx-tbl--compact">
+            <thead><tr><th class="lx-n">#</th><th>Unit</th><th>What</th><th class="lx-n">Before</th><th class="lx-n">After</th><th class="lx-n">Δ</th><th>Status</th></tr></thead>
+            <tbody>
+              <tr><td class="lx-n">1</td><td class="lx-k">P0</td><td>point 4 · 48×</td><td class="lx-n">0 mV</td><td class="lx-n" data-v="set">−20 mV</td><td class="lx-n" data-v="set">−20</td><td class="lx-dim">queued</td></tr>
+              <tr><td class="lx-n">2</td><td class="lx-k">P0</td><td>point 5 · 53×</td><td class="lx-n">0 mV</td><td class="lx-n" data-v="set">−15 mV</td><td class="lx-n" data-v="set">−15</td><td class="lx-dim">queued</td></tr>
+              <tr><td class="lx-n">3</td><td class="lx-k">Package</td><td>long-term limit · PL1</td><td class="lx-n">250 W</td><td class="lx-n" data-v="set">200 W</td><td class="lx-n" data-v="set">−50</td><td class="lx-dim">queued</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="lx-sheet-sec">
+          <span class="lx-band-t">Effect</span>
+          <dl class="lx-kv">
+            <dt>Predicted Vcore, all cores busy</dt><dd><span class="lx-mono" data-v="set">1.28 V</span> <span class="lx-dim">now <span class="lx-mono">1.29 V</span> · a prediction, not a measurement</span></dd>
+            <dt>Writes</dt><dd>2 mailbox (V/F) · 1 powercap (PL1), each read back</dd>
+            <dt>How to undo</dt><dd>Cold boot, or Restore accepted. PL1 also returns at any reboot.</dd>
+          </dl>
+        </div>
+        <div class="lx-sheet-sec"><details class="lx-notes"><summary>2 plan notes</summary><ul><li>No stock baseline curve: predictions use factory points only.</li><li>PL1 time window unchanged (28 s).</li></ul></details></div>
+      </div>
+      <div class="lx-sheet-foot">
+        <button class="lx-btn lx-btn--l0" type="button">Close, keep plan</button>
+        <span class="lx-sheet-status">Ready. The app asks you to confirm in a system dialog.</span>
+        <button class="lx-btn lx-btn--l4" type="button">Apply 3 writes</button>
+      </div>
+    </section>
+  </div>
+</section>
+
+<!-- ============================================================ 13 overlays -->
+<section class="kit-sec" id="overlays">
+  <h2 class="kit-h"><span class="kit-n">13</span>Popover and toasts<span class="kit-ref">§5.11 · the only shadows</span></h2>
+  <div class="kit-grid2">
+    <div class="kit-pop-host">
+      <button class="lx-ann" type="button" data-state="lit-warn" aria-expanded="true">PL1 <span class="lx-duty">30%</span></button>
+      <div class="lx-pop" role="dialog" aria-label="Limit reasons">
+        <div class="lx-band"><span class="lx-band-t">Limit reasons</span><span class="lx-band-m">MSR 0x64F · last 1 s</span></div>
+        <table class="lx-tbl lx-tbl--compact lx-tbl--fill">
+          <tbody>
+            <tr><td class="lx-k">PL1</td><td>long-term power limit</td><td class="lx-n">30%</td></tr>
+            <tr><td class="lx-k">Turbo</td><td>multi-core turbo table</td><td class="lx-n">100%</td></tr>
+          </tbody>
+        </table>
+        <div class="lx-tfoot-note">PL1 is <span class="lx-mono">250 W</span>; package draws <span class="lx-mono">249 W</span>. <button class="lx-link" type="button">Tune › Power</button></div>
+      </div>
+    </div>
+    <div class="kit-toast-host">
+      <div class="lx-toasts">
+        <div class="lx-toast lx-toast--ok"><span class="lx-toast-t">Read complete</span><button class="lx-btn lx-btn--l0" type="button" aria-label="Dismiss">✕</button><span class="lx-toast-b">19:53:03 · 132 requests · 1.1 s</span></div>
+        <div class="lx-toast lx-toast--fault"><span class="lx-toast-t">Helper disconnected</span><button class="lx-btn" type="button">Retry</button><span class="lx-toast-b">Edits are kept. Values freeze until it is back.</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ 14 plot -->
+<section class="kit-sec" id="plot">
+  <h2 class="kit-h"><span class="kit-n">14</span>Plot core<span class="kit-ref">§5.14 · x is a real scale · status colours never inside</span></h2>
+  <div class="lx-panel kit-panel-demo kit-w520 kit-pad">
+    <div class="lx-plot">
+      <svg viewBox="0 0 600 210" role="img" aria-label="V/F curve"><line class="lx-gridl" x1="44" x2="586" y1="184" y2="184"/><text class="lx-tick" x="38" y="184" dy="3.5" text-anchor="end">0.6</text><line class="lx-gridl" x1="44" x2="586" y1="146.7" y2="146.7"/><text class="lx-tick" x="38" y="146.7" dy="3.5" text-anchor="end">0.8</text><line class="lx-gridl" x1="44" x2="586" y1="109.3" y2="109.3"/><text class="lx-tick" x="38" y="109.3" dy="3.5" text-anchor="end">1.0</text><line class="lx-gridl" x1="44" x2="586" y1="72" y2="72"/><text class="lx-tick" x="38" y="72" dy="3.5" text-anchor="end">1.2</text><line class="lx-gridl" x1="44" x2="586" y1="34.7" y2="34.7"/><text class="lx-tick" x="38" y="34.7" dy="3.5" text-anchor="end">1.4</text><line class="lx-axisl" x1="134.3" x2="134.3" y1="184" y2="188"/><text class="lx-tick" x="134.3" y="199" text-anchor="middle">10×</text><line class="lx-axisl" x1="224.7" x2="224.7" y1="184" y2="188"/><text class="lx-tick" x="224.7" y="199" text-anchor="middle">20×</text><line class="lx-axisl" x1="315" x2="315" y1="184" y2="188"/><text class="lx-tick" x="315" y="199" text-anchor="middle">30×</text><line class="lx-axisl" x1="405.3" x2="405.3" y1="184" y2="188"/><text class="lx-tick" x="405.3" y="199" text-anchor="middle">40×</text><line class="lx-axisl" x1="495.7" x2="495.7" y1="184" y2="188"/><text class="lx-tick" x="495.7" y="199" text-anchor="middle">50×</text><line class="lx-axisl" x1="586" x2="586" y1="184" y2="188"/><text class="lx-tick" x="586" y="199" text-anchor="middle">60×</text><line class="lx-axisl" x1="44" x2="586" y1="184" y2="184"/><text class="lx-axis-t" x="38" y="10" text-anchor="end">V</text><polyline class="lx-tr lx-tr--base" points="116.3,166.6 224.7,159.9 315,143.7 477.6,101.5 522.8,69 540.8,49 549.9,39.1 558.9,29.3"/><polyline class="lx-tr lx-tr--meas" points="116.3,166.6 224.7,159.9 315,143.7 477.6,101.5 522.8,72.7 540.8,49 549.9,39.1 558.9,29.3"/><polyline class="lx-tr lx-tr--set" points="116.3,166.6 224.7,159.9 315,143.7 477.6,105.2 522.8,72.7 540.8,49 549.9,39.1 558.9,29.3"/><rect class="lx-mk " x="113.3" y="163.6" width="6" height="6"/><rect class="lx-mk " x="221.7" y="156.9" width="6" height="6"/><rect class="lx-mk " x="312" y="140.7" width="6" height="6"/><rect class="lx-mk lx-mk--set" x="474.6" y="102.2" width="6" height="6"/><rect class="lx-mk " x="519.8" y="69.7" width="6" height="6"/><rect class="lx-mk " x="537.8" y="46" width="6" height="6"/><rect class="lx-mk " x="546.9" y="36.1" width="6" height="6"/><rect class="lx-mk " x="555.9" y="26.3" width="6" height="6"/><line class="lx-cursor" x1="477.6" x2="477.6" y1="16" y2="184"/></svg>
+      <div class="lx-plot-ro"><span><b>48×</b></span><span>factory <b>1.042</b></span><span>now <b>1.042</b></span><span>after <b>1.022</b> V</span></div>
+    </div>
+    <div class="lx-legend"><span><i class="lx-sw lx-sw--base"></i>factory</span><span><i class="lx-sw"></i>now</span><span><i class="lx-sw lx-sw--set"></i>after your edits</span><span><i class="lx-sw-mk lx-sw-mk--set"></i>edited point</span></div>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

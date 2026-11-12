@@ -1,0 +1,1249 @@
+"""``WriteGuard``: the only path that may call ``MailboxTransport.transact`` (ARCHITECTURE.md Contract 5).
+
+Every OC-mailbox request -- reads included, because a mailbox "read" is a WRMSR to MSR 0x150 (registers.md "OC mailbox --
+request model"; SAFETY.md "OC mailbox rule") -- goes through :meth:`WriteGuard.execute`. The guard fails closed: a request
+that is not explicitly enabled, confirmed, allowlisted, baselined, bounded, rate-limited, serialised and auditable is
+refused and **nothing is sent**. It never sleeps and never retries (SAFETY.md "Nothing in the app is allowed to
+loop-retry a failing write"; "One transaction at a time").
+
+The guard depends only on the structural :class:`Transport` protocol, not on ``linux_xtu.msr``. It performs no I/O of its
+own besides the audit log and the lock file.
+
+Order of checks in :meth:`WriteGuard.execute` (first failure raises :class:`GuardRefused` before anything is sent, and is
+audited): TRIPPED, NO_ENV_FLAG, BAD_CONFIRMATION, CPU_NOT_ALLOWED, NOT_ALLOWLISTED, BASELINE_MISSING, CHECK_FAILED,
+SESSION_LIMIT, [audit log read: AUDIT_UNAVAILABLE], BOOT_LIMIT, DWELL (in-process, then cross-process), LOCKED,
+HEALTH_GATE. Then: audit ``attempt`` -> transact -> audit ``result`` -> (write with rc 0)
+read back through the same transport and compare the whole word -> ``health_gate("after")`` -> :class:`Result`.
+
+Trip (terminal for this guard instance): any exception from the transport (``MailboxTimeout``, ``MsrError``, anything),
+a read-back mismatch or unreadable read-back, a failing after-gate, or a lock that cannot be released. Once tripped,
+every call is refused ``TRIPPED``; a new guard instance (a new session, after the human looked) is the only reset.
+
+Cross-process limits (T-016; SAFETY.md "Mailbox-session discipline", D-011). The CLI is one process per command, so the
+in-process session limit and dwell cannot stop back-to-back invocations -- the sweep-like mailbox traffic behind the
+2026-08-26 incident. The guard therefore also reads the append-only audit log (``audit.read_state``) and refuses:
+
+* ``DWELL`` if the latest ``attempt`` record *of any process* is younger than ``policy.min_dwell_s`` by the wall clock (or is
+  more than 1 s in the future: the clock went backwards, so the elapsed time cannot be trusted);
+* ``BOOT_LIMIT`` if the ``attempt`` records carrying the current ``boot_id`` already number ``policy.max_operations_per_boot``
+  (an unknown boot id -- ``None`` -- is its own bucket and is capped the same way);
+* ``AUDIT_UNAVAILABLE`` if the log cannot be read or interpreted: limits that cannot be evaluated are not waived.
+
+Both audit-based checks are repeated once the lock file is held, so two processes that start together cannot both pass them.
+The read-back after a write is part of the same operation: it is logged as ``readback``, never ``attempt``, so it is exempt; so are G-237's re-reads of a late OC-point V target (below).
+The guard never sleeps to satisfy a limit; it refuses. Its one wait is G-237's bounded re-read (below).
+
+G-237 (``[MEASURED lnx 2026-10-19]``, registers.md "OC-point V target lands late"): the read-back of a ``0x11`` word whose V target ``[19:8]`` reads 0 while the word written has a
+non-zero one, and ratio, mode and offset are equal, is read again (``0x10``, same cpu/P1/P2, same lock) up to ``len(OC_TARGET_SETTLE_S)`` = 4 times, after 2, 5, 10, 20 ms. A match
+verifies; any other difference, or a target still 0 after the last re-read, trips as always. A write is never repeated. Every read is a ``readback`` record (the unmatched ones
+``pending``, no ``verified``); the last one carries ``polls`` and ``settle_ms``. Each re-read is a WRMSR but, like the first read-back, it is neither counted in
+:attr:`WriteGuard.operations` (G-237 review: a counted re-read could push a planned apply over its exact session cap mid-way) nor an ``attempt`` (no dwell, no per-boot count). The
+wait is injectable (``WriteGuard(settle_wait=...)``), ``time.sleep`` by default.
+
+Plain MSRs (T-023, D-017): a plain ``rdmsr`` / ``wrmsr`` of a turbo ratio table is an :class:`MsrRequest` and goes through the **same**
+chain (:meth:`WriteGuard._execute_msr`): TRIPPED, NO_ENV_FLAG, BAD_CONFIRMATION, [no MSR port], CPU_NOT_ALLOWED, NOT_ALLOWLISTED
+(``Policy.msr_allow``; a CPU the entry does not cover is CPU_NOT_ALLOWED), BASELINE_MISSING (a write needs an ``rdmsr`` of the same MSR on the
+same CPU earlier in this session), CHECK_FAILED (``turbo_ratio_bounded`` for a write, then ``policy.turbo_order_problem``: no table may rise with the active-core count,
+D-049 / D-053 item 5), SESSION_LIMIT, BOOT_LIMIT, DWELL, LOCKED, HEALTH_GATE.
+A plain **read** is audited (event ``msr_read``, never ``attempt``) but is not a WRMSR: it passes the same limit checks yet does not count toward
+the session / per-boot caps and does not start a dwell. A plain **write** counts like a mailbox request. Read-back of a write: ``rdmsr`` on the
+same CPU must equal the value written, then ``rdmsr`` on ``verify_cpu`` (a CPU of the other core kind: the scope of ``0x650`` / ``0x1AD`` is
+``[UNVERIFIED]``, so a value that does not show up there means the MSR is not package-wide) -- a mismatch trips. The guard gets the port through
+``WriteGuard(msr_port=...)``; without it every :class:`MsrRequest` is refused (fail closed).
+
+Session facts (T-021, ``[MEASURED win 2026-10-01]`` XTU's per-core Apply: ``0x11`` -> ``0x1D`` -> ``0x26`` read -> ``0x27``): the named
+checks also see what this session has read for the request's CPU (``0x1C`` favored word, ``0x09 P1=0x11`` fused point, and -- D-016 --
+``0x28`` hardware maximum voltage, ``0x01`` ratio limit) and the ``0x11`` word it executed there (``policy.CheckContext``), together with the CPU's own limits
+for the CPU's core kind (D-049: ratio ``0x01 [7:0]``, voltage ``0x28 - 1 LSB``, read live; an unread limit refuses a raise: ``CPU_LIMIT_UNREAD``). Read twins:
+``0x11->0x10``, ``0x15->0x14``, ``0x1D->0x1C``, ``0x27->0x26``; the read-back of ``0x1D`` compares only ``[7:0]`` (``0x1C`` also carries
+the fused ratio in ``[15:8]``), every other write compares the whole word. The read-backs (G-237's re-reads included) are extra WRMSRs: they are exempt from this
+guard's session / per-boot counters (``audit.py`` logs them as ``readback``, never ``attempt``) and counted by the planner's pre-flight budget instead (T-022,
+``controls.planner.count_operations``). ``revert_plan`` is XTU-shaped: see :meth:`WriteGuard.revert_plan`.
+
+B-01 (assessment 05): the checks also get the words in force on the request's P1 of its CPU (``CheckContext.unit_words``: every ``0x10`` read this session, overridden by a ``0x11``
+sent since that read) and of the other CPUs of its unit (``unit_peer_words``: the E cluster, ``Policy.curve_cpus``, since a write may reach the whole cluster; every CPU for the ring),
+because the whole-curve offset (``P2 = 0`` ``[31:21]``) adds to every point's offset ``[MEASURED lnx 2026-10-11/12]``. A write that raises the unit's summed voltage above its
+no-offset base (``policy.summed_voltage_raw``) is judged by that sum against the CPU's ``0x28`` limit, and it needs the request CPU's whole point table read this session
+(``point_table_read``: ``0x10 P2 = 1, 2, ...`` until one answers rc ``0x11``; a ``P2 = 0`` write that may create an OC point voids the walk of its unit, a point found past the
+recorded end voids it too) -- else ``CPU_LIMIT_UNREAD``; so does a positive point offset whose ``P2 = 0`` word was not read. B-04: a ``0x1D`` that lowers the CPU's maximum ratio
+may precede its ``0x11`` (frequency first); it then binds that CPU's next ``0x11 P2=0`` to its ratio (``CheckContext.favored_pending``) until that word, or a ``0x1D`` that
+restores the ``0x1C[7:0]`` read this session (its revert), is sent. A write whose outcome is unknown counts as sent for both.
+
+T-025 (per-V/F-point offsets): ``0x11`` with ``P1=0`` and ``P2`` 1..15 is judged by its own check ``vf_point_offset_bounded`` against the ``0x10`` read of the
+same CPU **and the same P2** (baselines are keyed by cpu/p1/p2); read-back is the whole word as for ``P2=0``; its revert is the baseline point word
+exactly (never filled from ``0x09``). The facts the other checks collect (``0x1C``, ``0x09``, ``0x28`` and the last ``0x11`` sent) concern the OC point
+(``P2=0``) only; a point write never feeds them and no ``0x1D`` / ``0x27`` follows it.
+"""
+from __future__ import annotations
+
+import hmac
+import math
+import os
+import re
+import threading
+import time
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from pathlib import Path
+from types import MappingProxyType
+from typing import NoReturn, Protocol, overload
+
+from linux_xtu.mailbox import Cmd, Response, VfWord, is_write
+from linux_xtu.paths import legacy_lock_companions
+
+from . import lockfile
+from .audit import AuditLog, AuditState, AuditUnreadable, read_state
+from .policy import (
+    CHECKS,
+    MSR_CHECKS,
+    AllowEntry,
+    CheckContext,
+    MsrAllowEntry,
+    Policy,
+    build_context,
+    hw_v_max_raw,
+    build_msr_context,
+    RC_PAST_TABLE,
+    fused_top_ratio,
+    point_table_walked,
+    turbo_bytes,
+    turbo_order_problem,
+)
+
+__all__ = [
+    "ENV_FLAG",
+    "Confirmation",
+    "GuardRefused",
+    "MsrPortLike",
+    "MsrRequest",
+    "MsrResult",
+    "Refusal",
+    "Request",
+    "Result",
+    "Transport",
+    "WriteGuard",
+    "anchored_wall_clock",
+    "read_boot_id",
+]
+
+ENV_FLAG = "LINUX_XTU_ALLOW_MAILBOX"  # SAFETY.md "Implementation requirements": explicit env flag / CLI confirmation
+
+#: write command -> its read twin (registers.md "Mailbox commands": 0x10/0x11, 0x14/0x15, 0x1C/0x1D, 0x26/0x27 are the rd/wr pairs).
+#: Only writes with a twin can be baselined and read back; any other write is refused BASELINE_MISSING even if a policy lists it.
+_READ_TWIN: Mapping[int, int] = MappingProxyType(
+    {
+        int(Cmd.VOLTAGE_FREQ_WRITE): int(Cmd.VOLTAGE_FREQ_READ),
+        int(Cmd.MISC_GLOBAL_CONFIG_WRITE): int(Cmd.MISC_GLOBAL_CONFIG_READ),
+        int(Cmd.FAVORED_CORE_WRITE): int(Cmd.FAVORED_CORE_READ),
+        int(Cmd.GRANULAR_RATIO_WRITE): int(Cmd.GRANULAR_RATIO_READ),
+    }
+)
+
+
+def _same_word(written: int, read: int) -> bool:
+    return read == written
+
+
+def _same_low_byte(written: int, read: int) -> bool:
+    """0x1D: the favored-core word is the ratio (``[7:0]``); 0x1C also returns the fused ratio in ``[15:8]``. After a 0x1D, ``0x1C[7:0]`` reads the ratio written
+    (``[MEASURED lnx 2026-10-13]``, G-147, platform-arl-s.md §3); any other answer trips the guard."""
+    return (read & 0xFF) == written
+
+
+#: write command -> does the read-back (twin read) prove the write? Default: the whole word equals what was written.
+_READBACK_MATCH: Mapping[int, Callable[[int, int], bool]] = MappingProxyType(
+    {
+        int(Cmd.VOLTAGE_FREQ_WRITE): _same_word,
+        int(Cmd.MISC_GLOBAL_CONFIG_WRITE): _same_word,
+        int(Cmd.FAVORED_CORE_WRITE): _same_low_byte,
+        int(Cmd.GRANULAR_RATIO_WRITE): _same_word,
+    }
+)
+
+
+#: G-237, registers.md "OC-point V target lands late" ``[MEASURED lnx 2026-10-19]``: the first read-back of a newly created OC point has its ratio but V target 0 (``0x0005B43A`` read
+#: ``0x0000003A`` ~1 ms later); the target shows up asynchronously. The bounded re-read of ``0x10`` waits these seconds before re-read 1, 2, 3, 4 -- 37 ms in all, never a loop without end.
+#: The settle time itself is ``[UNVERIFIED]``; a target that has not landed after the last one trips like any other mismatch. A write is never repeated.
+OC_TARGET_SETTLE_S: tuple[float, ...] = (0.002, 0.005, 0.010, 0.020)
+_V_TARGET_MASK = 0x000FFF00  # VfWord ``[19:8]``
+
+
+def _late_v_target(written: int, read: int) -> bool:
+    """True iff ``read`` is ``written`` with the V target field zero where ``written`` has a non-zero one -- ratio, mode and offset all equal. Anything else is a real mismatch."""
+    return bool(written & _V_TARGET_MASK) and not (read & _V_TARGET_MASK) and (read | (written & _V_TARGET_MASK)) == written
+
+
+def _revert_vf_word(baseline: int, favored: int | None, fused: int | None, cap_ratio: bool = True) -> int:
+    """The XTU-shaped word that puts a core's *offset* (and the other fields) back: the baseline word, with a zero ratio / V target
+    filled the way XTU fills it (``0x1C[7:0]`` / the fused ``0x09`` voltage) -- **G-122:** with ``cap_ratio`` the filled ratio is capped at the core's top fused ratio
+    (``[7:0]`` of the live ``0x09`` word ``fused``), so reverting a word that had no OC point never creates one (the caller passes ``False`` when the word being undone had an OC
+    ratio: its undo keeps the XTU fill, which that ratio's step limits were measured from) -- and then **the word the hardware keeps** (D-035, ``[MEASURED lnx 2026-10-11]``):
+    with no OC point (ratio <= the top fused ratio) the V target is 0 whatever the offset (G-124: the hardware drops a written one, ``0xFEC5B439`` read back
+    ``0xFEC00039``, and at offset 0 it kept ``0x00000039`` for ``0x0005B439`` when only the 0x11 was sent). (Same rule as ``controls.planner.kept_word`` / ``has_oc_point``, which this module cannot import.) So a baseline
+    ``0xFEC00039`` is restored exactly. **A baseline word with a zero field (``0x0``, 23 of 24 cores at boot) cannot itself be written back** -- XTU never
+    sends one; a reboot restores it."""
+    base = VfWord.from_u32(baseline)
+    top = fused_top_ratio(fused)  # None = the session did not read 0x09: no cap and no zeroing (the XTU-shaped word), a revert must always produce a word
+    fav = (favored or 0) & 0xFF
+    ratio = base.ratio or (min(fav, top) if fav and cap_ratio and top is not None else fav)
+    v_target = base.v_target_raw or (((fused or 0) >> 8) & 0xFFF)
+    if top is not None and 0 < ratio <= top:  # G-124: no OC point = V target 0, whatever the offset or where the target came from
+        v_target = 0
+    return base.with_(ratio=ratio, v_target_raw=v_target).to_u32()
+
+
+_U32_MAX = 0xFFFFFFFF
+_OPERATOR_LOG_MAX = 200
+_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"  # one UUID per boot; Linux only
+_BOOT_ID_RE = re.compile(r"[0-9a-fA-F-]{32,36}")
+_FUTURE_SLACK_S = 1.0  # an audit timestamp this far ahead of the wall clock is tolerated; more means the clock went backwards
+
+
+def read_boot_id() -> str | None:
+    """The kernel's boot id (``/proc/sys/kernel/random/boot_id``), or ``None`` if unreadable, malformed or not Linux.
+    ``None`` is not "no limit": the guard counts unknown-boot operations in their own capped bucket."""
+    try:
+        with open(_BOOT_ID_PATH, "rb") as handle:
+            text = handle.read(128).decode("ascii", "replace").strip()
+    except OSError:
+        return None
+    return text.lower() if _BOOT_ID_RE.fullmatch(text) else None
+
+
+def anchored_wall_clock(clock: Callable[[], float], wall: Callable[[], float] = time.time) -> Callable[[], float]:
+    """A wall clock that moves exactly as ``clock`` does, starting from ``wall()`` now. For simulations and tests where the
+    dwell waits run on a virtual/fake monotonic clock: real wall time would not advance, so the audit-based dwell would
+    refuse a run that legitimately waited. Production passes the real ``time.time`` and never uses this."""
+    base_wall, base = wall(), clock()
+    return lambda: base_wall + (clock() - base)
+
+
+def _when(ts: float) -> str:
+    try:
+        return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="milliseconds")
+    except (ValueError, OverflowError, OSError):
+        return repr(ts)
+
+
+class Transport(Protocol):
+    """Structural type of ``linux_xtu.msr.MailboxTransport`` (Contract 4). The guard never imports that module."""
+
+    def transact(self, cpu: int, cmd: int, p1: int, p2: int, data: int = 0) -> Response: ...
+
+
+@dataclass(frozen=True)
+class Request:
+    """One mailbox request. ``purpose`` is free text for the audit log and must be non-blank."""
+
+    cpu: int
+    cmd: int
+    p1: int
+    p2: int
+    data: int
+    purpose: str
+
+
+class MsrPortLike(Protocol):
+    """Structural type of ``linux_xtu.msr.MsrPort`` (Contract 4) for the plain-MSR path. The guard never imports that module."""
+
+    def rdmsr(self, cpu: int, msr: int) -> int: ...
+
+    def wrmsr(self, cpu: int, msr: int, value: int) -> None: ...
+
+
+@dataclass(frozen=True)
+class MsrRequest:
+    """One plain-MSR request (T-023): ``kind`` ``"read"`` (``value`` must be 0) or ``"write"`` of ``value`` (u64). ``verify_cpu`` (writes only)
+    is the CPU of the other core kind the guard reads back on after the same-CPU read-back. ``purpose`` is free text, non-blank."""
+
+    cpu: int
+    msr: int
+    value: int
+    purpose: str
+    kind: str = "read"
+    verify_cpu: int | None = None
+
+
+@dataclass(frozen=True)
+class MsrResult:
+    """Outcome of an executed :class:`MsrRequest`. Read: ``value`` is the word read, ``verify_value`` / ``verified`` are ``None``. Write:
+    ``value`` is the read-back on ``request.cpu``, ``verify_value`` the read-back on ``request.verify_cpu``, ``verified`` True only when both
+    equal the value written (else the guard has tripped)."""
+
+    request: MsrRequest
+    value: int
+    verify_value: int | None
+    verified: bool | None
+
+
+@dataclass(frozen=True)
+class Confirmation:
+    """The human's per-session confirmation: the session token they were shown/typed and their name. The token is
+    excluded from ``repr`` so it does not leak into logs or tracebacks."""
+
+    token: str = field(repr=False)
+    operator: str
+
+
+@dataclass(frozen=True)
+class Result:
+    """Outcome of an executed request. ``response.rc != 0`` is returned, not raised. ``readback``/``verified`` are set only
+    for a write that returned rc 0 (``verified`` True = the full word read back equals the word written); ``verified is
+    None`` means *no read twin was consulted* (a read, or a write that did not succeed) -- it is not a pass."""
+
+    request: Request
+    response: Response
+    readback: Response | None
+    verified: bool | None
+    polls: int = 0  # G-237: the 0x10 re-reads it took for a late OC-point V target to show up (0 = the first read-back already decided)
+    settle_ms: float | None = None  # G-237: the time from the first read-back's return to the last re-read's, set whenever ``polls`` > 0
+
+
+class Refusal(str, Enum):
+    NO_ENV_FLAG = "NO_ENV_FLAG"
+    BAD_CONFIRMATION = "BAD_CONFIRMATION"
+    CPU_NOT_ALLOWED = "CPU_NOT_ALLOWED"
+    NOT_ALLOWLISTED = "NOT_ALLOWLISTED"
+    CHECK_FAILED = "CHECK_FAILED"
+    BASELINE_MISSING = "BASELINE_MISSING"
+    SESSION_LIMIT = "SESSION_LIMIT"
+    AUDIT_UNAVAILABLE = "AUDIT_UNAVAILABLE"
+    BOOT_LIMIT = "BOOT_LIMIT"
+    DWELL = "DWELL"
+    LOCKED = "LOCKED"
+    HEALTH_GATE = "HEALTH_GATE"
+    TRIPPED = "TRIPPED"
+
+
+class GuardRefused(Exception):
+    """Raised instead of sending. ``reason`` says which check failed; ``detail`` is human-readable. ``retry_after_s`` is set
+    for a ``DWELL`` refusal: the seconds until the dwell window closes (the guard does not wait; the caller may)."""
+
+    def __init__(self, reason: Refusal, detail: str, retry_after_s: float | None = None) -> None:
+        super().__init__(f"{reason.value}: {detail}")
+        self.reason = reason
+        self.detail = detail
+        self.retry_after_s = retry_after_s
+
+
+@dataclass(frozen=True)
+class _Executed:
+    """A write that was sent (rc 0, or outcome unknown after a transport exception) and the word it would be undone with
+    (``baseline``: the twin read of this session; ``favored`` / ``fused``: the 0x1C / 0x09 words known then, to fill a zero field)."""
+
+    request: Request
+    baseline: int
+    favored: int | None = None
+    fused: int | None = None
+    stamp: int = 0  # identifies the read of the twin this baseline came from: a re-read starts a new chain of writes
+    prior: int | None = None  # 0x11 only: the data of the previous 0x11 to this CPU on the same baseline read (the state this write left)
+
+
+@dataclass(frozen=True)
+class _MsrExecuted:
+    """A plain write that was sent (success, or outcome unknown after a port exception) and the word it is undone with (the ``rdmsr``
+    baseline of this session)."""
+
+    request: MsrRequest
+    baseline: int
+
+
+def _require_u64(value: object, what: str) -> int:
+    """Fail closed on a port that answers with anything but an int in 0..2**64-1."""
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFFFFFFFFFF:
+        raise ValueError(f"port returned {value!r} for {what} (expected an int 0..2**64-1)")
+    return value
+
+
+def _require_response(value: object) -> Response:
+    """Fail closed on a transport that answers with anything but a well-formed ``Response`` (rc u8, data u32)."""
+    if not isinstance(value, Response):
+        raise TypeError(f"transport returned {type(value).__name__}, not a Response")
+    for name, top in (("rc", 0xFF), ("data", _U32_MAX)):
+        item = getattr(value, name)
+        if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= top:
+            raise ValueError(f"transport returned a Response with {name}={item!r} (expected int 0..{top:#x})")
+    return value
+
+
+def _operator_of(confirm: object) -> str | None:
+    operator = getattr(confirm, "operator", None)
+    return operator[:_OPERATOR_LOG_MAX] if isinstance(operator, str) else None
+
+
+class WriteGuard:
+    """The single gate for all mailbox traffic. One instance = one session (counters, baselines, trip state live here).
+    The audit log (``audit.path``) is the only state shared with other processes: cross-process dwell and the per-boot cap
+    are read from it on every call (module docstring, "Cross-process limits")."""
+
+    def __init__(
+        self,
+        transport: Transport,
+        policy: Policy,
+        audit: AuditLog,
+        *,
+        session_token: str,
+        env: Mapping[str, str] | None = None,
+        health_gate: Callable[[str], tuple[bool, str]] | None = None,
+        lock_path: Path | str,
+        clock: Callable[[], float] = time.monotonic,
+        wall_clock: Callable[[], float] | None = None,
+        boot_id_fn: Callable[[], str | None] = read_boot_id,
+        msr_port: MsrPortLike | None = None,
+        session_favored_words: Mapping[int, int] | None = None,
+        settle_wait: Callable[[float], None] | None = None,
+        legacy_locks: Sequence[Path | str] | None = None,
+    ) -> None:
+        if not callable(getattr(transport, "transact", None)):
+            raise TypeError("transport must have a transact(cpu, cmd, p1, p2, data) method")
+        if not isinstance(policy, Policy):
+            raise TypeError("policy must be a linux_xtu.guard.Policy")
+        if not callable(getattr(audit, "append", None)):
+            raise TypeError("audit must be a linux_xtu.guard.AuditLog")
+        if not isinstance(session_token, str) or not session_token:
+            raise ValueError("session_token must be a non-empty string (an empty token would confirm anything)")
+        if msr_port is not None and not (callable(getattr(msr_port, "rdmsr", None)) and callable(getattr(msr_port, "wrmsr", None))):
+            raise TypeError("msr_port must have rdmsr(cpu, msr) and wrmsr(cpu, msr, value) methods")
+        self._msr_port = msr_port  # None: every MsrRequest is refused (plain MSR access is off)
+        self._settle_wait = time.sleep if settle_wait is None else settle_wait  # G-237: the only wait the guard has (OC_TARGET_SETTLE_S); tests inject one
+        self._transport = transport
+        self._policy = policy
+        self._audit = audit
+        self._token = session_token.encode("utf-8", "surrogatepass")
+        self._env: Mapping[str, str] = os.environ if env is None else env
+        self._health_gate = health_gate
+        self._lock_path = Path(lock_path)
+        # D-054, review F3: the lock files of the earlier name held with this one (None: linux_xtu.paths.legacy_lock_companions of lock_path; tests pass [])
+        self._legacy_locks = tuple(Path(p) for p in (legacy_lock_companions(self._lock_path) if legacy_locks is None else legacy_locks))
+        self._clock = clock
+        # ``wall_clock=None``: real time.time with the default monotonic clock; with an injected ``clock`` (simulation/tests)
+        # the wall clock moves with it, so dwell waits done on that clock are also seen by the audit-based dwell.
+        if wall_clock is None:
+            wall_clock = time.time if clock is time.monotonic else anchored_wall_clock(clock)
+        self._wall_clock = wall_clock
+        if not callable(boot_id_fn):
+            raise TypeError("boot_id_fn must be callable")
+        self._boot_id_fn = boot_id_fn
+        self._busy = threading.Lock()  # in-process serialisation; never waits (contention is refused LOCKED)
+        self._tripped = False
+        self._trip_reason = ""
+        self._ops = 0  # executed operations this session (read-backs excluded)
+        self._last_op_at: float | None = None
+        self._baselines: dict[tuple[int, int, int, int], int] = {}  # (read cmd, cpu, p1, p2) -> word from a successful read
+        self._stamps: dict[tuple[int, int, int, int], int] = {}  # the same keys -> sequence number of that read (for the revert chain)
+        self._reads_done = 0
+        self._journal: list[_Executed] = []
+        self._msr_baselines: dict[tuple[int, int], int] = {}  # (cpu, msr) -> value of a successful plain rdmsr (T-023)
+        self._msr_journal: list[_MsrExecuted] = []
+        # 0x1C words (cpu -> word) the helper read from the CPU earlier in this boot's session (tune.read): kept for callers that seed a session with earlier reads
+        self._seed_favored = {int(c): int(w) for c, w in (session_favored_words or {}).items() if w}
+        self._favored_pending: dict[int, int] = {}  # B-04: cpu -> data of a 0x1D sent ahead of its 0x11 (frequency first); cleared by the next 0x11 P2=0 of that cpu
+        self._past_table: dict[tuple[int, int], int] = {}  # B-01: (cpu, p1) -> the lowest P2 >= 1 whose 0x10 read answered rc 0x11 (past the V/F point table), still valid
+
+    # ---------------------------------------------------------------- public
+    @property
+    def tripped(self) -> bool:
+        return self._tripped
+
+    @property
+    def operations(self) -> int:
+        """The operations this session executed and the per-boot counter counted: every mailbox request (a read is a WRMSR) and every plain write; read-backs (G-237's re-reads
+        included) and plain ``rdmsr`` reads are not operations (G-141: what a helper op reports as the operations it used)."""
+        return self._ops
+
+    @property
+    def trip_reason(self) -> str:
+        """Why the guard tripped (empty while it has not)."""
+        return self._trip_reason
+
+    def revert_plan(self) -> list[Request | MsrRequest]:
+        """Inverse requests (``purpose="revert"``) for every write sent this session (SAFETY.md "Revert path"). Includes a write
+        whose outcome is unknown because the transport raised. The guard never executes them; sending one is a new ``execute``
+        call subject to every check (including the session limit and dwell).
+
+        XTU-shaped (``[MEASURED win 2026-10-01]``: XTU's revert is ``0x11`` with the baseline offset, ``0x1D`` = its ratio, ``0x27``):
+        a ``0x11`` is undone with the word that was in effect before it -- the baseline word with a zero ratio / V target filled from
+        ``0x1C[7:0]`` / the fused ``0x09`` voltage (a baseline of ``0x0`` cannot be written back -- only a reboot restores it), or the
+        previous ``0x11`` of the same chain; a ``0x1D`` with the ratio of the last ``0x11`` undo; a ``0x27`` and a ``0x15`` with the word
+        read before them (``percore_enable_only`` refuses the ``0x15`` inverse, as before).
+
+        D-016 order: per CPU, newest-written CPU first; that CPU's ``0x11`` undos **newest first** -- so a voltage-first raise (V target
+        word, then full word) is undone **frequency first** (ratio back, then V target and offset, each word passing the ordering rule of
+        ``vf_bounded``) -- then its ``0x1D`` / ``0x27`` undos in the order they were sent (the ``0x1D`` check needs its ``0x11`` first); the
+        package-wide ``0x15`` inverses last, newest first. A reboot restores the BIOS-programmed state whatever this plan says.
+
+        T-023: a plain write of a turbo table is undone with the ``rdmsr`` baseline of this session (:class:`MsrRequest`, ``purpose="revert"``,
+        newest first). Frequency-safe order: an undo that **lowers** a bucket (the write had raised it) comes before every mailbox undo
+        (frequency back first, then the voltage), an undo that raises one (the write had lowered it) comes after them (voltage up first)."""
+        per_cpu = [e for e in self._journal if int(e.request.cmd) != int(Cmd.MISC_GLOBAL_CONFIG_WRITE)]
+        package = [e for e in self._journal if int(e.request.cmd) == int(Cmd.MISC_GLOBAL_CONFIG_WRITE)]
+        cpus: list[int] = []
+        for e in reversed(per_cpu):
+            if e.request.cpu not in cpus:
+                cpus.append(e.request.cpu)
+        ordered: list[_Executed] = []
+        for cpu in cpus:
+            mine = [e for e in per_cpu if e.request.cpu == cpu]
+            vf = [e for e in mine if int(e.request.cmd) == int(Cmd.VOLTAGE_FREQ_WRITE)]
+            ordered += list(reversed(vf)) + [e for e in mine if int(e.request.cmd) != int(Cmd.VOLTAGE_FREQ_WRITE)]
+        ordered += list(reversed(package))
+        mailbox: list[Request | MsrRequest] = [
+            Request(e.request.cpu, e.request.cmd, e.request.p1, e.request.p2, self._inverse_data(e, per_cpu), "revert")
+            for e in ordered
+        ]
+        msr_first: list[Request | MsrRequest] = []
+        msr_last: list[Request | MsrRequest] = []
+        for m in reversed(self._msr_journal):
+            undo = MsrRequest(m.request.cpu, m.request.msr, m.baseline, "revert", "write", m.request.verify_cpu)
+            raises = any(u > w for u, w in zip(turbo_bytes(m.baseline), turbo_bytes(m.request.value)))
+            (msr_last if raises else msr_first).append(undo)
+        return msr_first + mailbox + msr_last
+
+    def _undo_vf_word(self, entry: _Executed) -> int:
+        """The word before a ``0x11``: the previous ``0x11`` of its chain, else the XTU-shaped baseline. T-025: a **point** word (``P2 != 0``)
+        is undone with the baseline word of that point **exactly** (its V target is 0 by design: filling it from ``0x09`` would turn a
+        per-point offset write into a voltage write)."""
+        if entry.prior is not None:
+            return entry.prior
+        if int(entry.request.p2) != 0:
+            return entry.baseline
+        top = fused_top_ratio(entry.fused)
+        written_oc_ratio = top is not None and VfWord.from_u32(entry.request.data).ratio > top  # G-122: that word made an OC point (e.g. XTU's E 48)
+        return _revert_vf_word(entry.baseline, entry.favored, entry.fused, cap_ratio=not written_oc_ratio)
+
+    def _inverse_data(self, entry: _Executed, entries: list[_Executed]) -> int:
+        cmd = int(entry.request.cmd)
+        if cmd == int(Cmd.VOLTAGE_FREQ_WRITE):
+            return self._undo_vf_word(entry)
+        if cmd == int(Cmd.FAVORED_CORE_WRITE):
+            for other in entries:  # the ratio of the LAST undo word of this CPU = its oldest 0x11's undo (what the 0x1D check wants)
+                if (
+                    other.request.cpu == entry.request.cpu
+                    and int(other.request.cmd) == int(Cmd.VOLTAGE_FREQ_WRITE)
+                    and (int(other.request.p1), int(other.request.p2)) == (0, 0)  # T-025: a point word's ratio is not the 0x1D ratio
+                ):
+                    return VfWord.from_u32(self._undo_vf_word(other)).ratio
+            return entry.baseline & 0xFF
+        return entry.baseline
+
+    @overload
+    def execute(self, req: Request, confirm: Confirmation) -> Result: ...
+
+    @overload
+    def execute(self, req: MsrRequest, confirm: Confirmation) -> MsrResult: ...
+
+    def execute(self, req: Request | MsrRequest, confirm: Confirmation) -> Result | MsrResult:
+        """Run one request through every check and, if all pass, send it. See the module docstring for the order. A :class:`MsrRequest`
+        (plain MSR, T-023) takes the same chain and returns an :class:`MsrResult`."""
+        if not isinstance(req, (Request, MsrRequest)):
+            raise TypeError("execute() needs a linux_xtu.guard.Request or MsrRequest")
+        if not self._busy.acquire(blocking=False):
+            self._refuse(Refusal.LOCKED, "another execute() is in progress in this process", req, confirm)
+        try:
+            if isinstance(req, MsrRequest):
+                return self._execute_msr(req, confirm)
+            return self._execute(req, confirm)
+        finally:
+            self._busy.release()
+
+    # ---------------------------------------------------------------- checks
+    def _execute(self, req: Request, confirm: Confirmation) -> Result:
+        if self._tripped:
+            self._refuse(Refusal.TRIPPED, f"guard tripped earlier: {self._trip_reason}", req, confirm)
+        if not self._env_flag_set():
+            self._refuse(Refusal.NO_ENV_FLAG, f"environment variable {ENV_FLAG} is not '1'", req, confirm)
+        problem = self._confirmation_problem(confirm)
+        if problem:
+            self._refuse(Refusal.BAD_CONFIRMATION, problem, req, confirm)
+        if not self._policy.cpu_allowed(req.cpu):
+            self._refuse(Refusal.CPU_NOT_ALLOWED, f"cpu {req.cpu!r} is not in the policy CPU set", req, confirm)
+        entry = self._policy.match(req.cmd, req.p1, req.p2)
+        if entry is None:
+            self._refuse(
+                Refusal.NOT_ALLOWLISTED,
+                f"cmd/p1/p2 {req.cmd!r}/{req.p1!r}/{req.p2!r} matches no allow entry (default deny)",
+                req,
+                confirm,
+            )
+        assert entry is not None
+        cmd = int(req.cmd)
+        write = is_write(cmd)
+        twin: int | None = None
+        baseline: int | None = None
+        if write:
+            twin = _READ_TWIN.get(cmd)
+            if twin is None:
+                self._refuse(Refusal.BASELINE_MISSING, f"write cmd {cmd:#04x} has no read twin to baseline against", req, confirm)
+            assert twin is not None
+            baseline = self._baselines.get((twin, int(req.cpu), int(req.p1), int(req.p2)))
+            if baseline is None:
+                self._refuse(
+                    Refusal.BASELINE_MISSING,
+                    f"no successful read of cmd {twin:#04x} for cpu {req.cpu}/p1 {req.p1}/p2 {req.p2} in this session",
+                    req,
+                    confirm,
+                )
+        self._check_request(req, entry, baseline, confirm)
+        if self._ops >= self._policy.max_operations_per_session:
+            self._refuse(
+                Refusal.SESSION_LIMIT,
+                f"{self._ops} operation(s) already executed; session limit is {self._policy.max_operations_per_session}",
+                req,
+                confirm,
+            )
+        boot_id = self._current_boot_id()
+        state = self._audit_state(req, confirm)
+        self._check_boot_limit(state, boot_id, req, confirm)
+        self._check_dwell(req, confirm)
+        self._check_audit_dwell(state, req, confirm)
+        self._take_lock(req, confirm)
+        try:
+            # Under the lock no other process can be between its own checks and its attempt record: look again.
+            state = self._audit_state(req, confirm)
+            self._check_boot_limit(state, boot_id, req, confirm)
+            self._check_audit_dwell(state, req, confirm)
+            gate_before = self._run_health("before")
+            if gate_before is not None and not gate_before[0]:
+                self._refuse(Refusal.HEALTH_GATE, f"health gate (before) says no: {gate_before[1]}", req, confirm)
+            self._record(
+                "attempt",
+                req,
+                confirm,
+                baseline=baseline,
+                health_gate=None if gate_before is None else {"before": gate_before[1]},
+                boot_id=boot_id,
+            )
+            self._ops += 1  # from here on the request counts, whatever happens
+            try:
+                return self._send_and_verify(req, confirm, baseline, twin)
+            except BaseException as exc:
+                self._trip(f"{type(exc).__name__}: {exc}", req, confirm)
+                raise
+            finally:
+                self._last_op_at = self._clock()
+        finally:
+            self._release_lock(req, confirm)
+
+    # ---------------------------------------------------------------- plain MSRs (T-023)
+    def _execute_msr(self, req: MsrRequest, confirm: Confirmation) -> MsrResult:
+        """The plain-MSR twin of :meth:`_execute`: same order, same refusals; the entry comes from ``Policy.msr_allow``."""
+        if self._tripped:
+            self._refuse(Refusal.TRIPPED, f"guard tripped earlier: {self._trip_reason}", req, confirm)
+        if not self._env_flag_set():
+            self._refuse(Refusal.NO_ENV_FLAG, f"environment variable {ENV_FLAG} is not '1'", req, confirm)
+        problem = self._confirmation_problem(confirm)
+        if problem:
+            self._refuse(Refusal.BAD_CONFIRMATION, problem, req, confirm)
+        if self._msr_port is None:
+            self._refuse(Refusal.NOT_ALLOWLISTED, "plain MSR access is off: this guard was built without an msr_port", req, confirm)
+        if not self._policy.cpu_allowed(req.cpu):
+            self._refuse(Refusal.CPU_NOT_ALLOWED, f"cpu {req.cpu!r} is not in the policy CPU set", req, confirm)
+        entry = self._policy.match_msr(req.msr, req.kind)
+        if entry is None:
+            self._refuse(
+                Refusal.NOT_ALLOWLISTED,
+                f"plain msr/kind {req.msr!r}/{req.kind!r} matches no msr_allow entry (default deny)",
+                req,
+                confirm,
+            )
+        assert entry is not None
+        if not entry.covers_cpu(int(req.cpu)):
+            self._refuse(Refusal.CPU_NOT_ALLOWED, f"cpu {req.cpu} is not covered by msr_allow entry {entry.name!r}", req, confirm)
+        write = entry.kind == "write"
+        baseline: int | None = None
+        if write:
+            baseline = self._msr_baselines.get((int(req.cpu), int(req.msr)))
+            if baseline is None:
+                self._refuse(
+                    Refusal.BASELINE_MISSING,
+                    f"no successful rdmsr of {int(req.msr):#x} on cpu {req.cpu} in this session (the baseline comes first)",
+                    req,
+                    confirm,
+                )
+        self._check_msr_request(req, entry, baseline, confirm)
+        if self._ops >= self._policy.max_operations_per_session:
+            self._refuse(
+                Refusal.SESSION_LIMIT,
+                f"{self._ops} operation(s) already executed; session limit is {self._policy.max_operations_per_session}",
+                req,
+                confirm,
+            )
+        boot_id = self._current_boot_id()
+        state = self._audit_state(req, confirm)
+        self._check_boot_limit(state, boot_id, req, confirm)
+        self._check_dwell(req, confirm)
+        self._check_audit_dwell(state, req, confirm)
+        self._take_lock(req, confirm)
+        try:
+            state = self._audit_state(req, confirm)
+            self._check_boot_limit(state, boot_id, req, confirm)
+            self._check_audit_dwell(state, req, confirm)
+            gate_before = self._run_health("before")
+            if gate_before is not None and not gate_before[0]:
+                self._refuse(Refusal.HEALTH_GATE, f"health gate (before) says no: {gate_before[1]}", req, confirm)
+            self._record(
+                "attempt" if write else "msr_read",
+                req,
+                confirm,
+                baseline=baseline,
+                health_gate=None if gate_before is None else {"before": gate_before[1]},
+                boot_id=boot_id,
+            )
+            if write:
+                self._ops += 1  # from here on the write counts, whatever happens (a plain read is not a WRMSR and does not)
+            try:
+                return self._send_and_verify_msr(req, confirm, baseline)
+            except BaseException as exc:
+                self._trip(f"{type(exc).__name__}: {exc}", req, confirm)
+                raise
+            finally:
+                if write:
+                    self._last_op_at = self._clock()
+        finally:
+            self._release_lock(req, confirm)
+
+    def _check_msr_request(self, req: MsrRequest, entry: MsrAllowEntry, baseline: int | None, confirm: Confirmation) -> None:
+        """CHECK_FAILED: well-formedness, the write's verify CPU, then the entry's named predicate (writes only)."""
+        value = req.value
+        if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= 0xFFFFFFFFFFFFFFFF:
+            self._refuse(Refusal.CHECK_FAILED, f"value {value!r} is not a u64", req, confirm)
+        if not isinstance(req.purpose, str) or not req.purpose.strip():
+            self._refuse(Refusal.CHECK_FAILED, "purpose must be a non-blank string (it goes into the audit log)", req, confirm)
+        if entry.kind == "read":
+            if value != 0 or req.verify_cpu is not None:
+                self._refuse(Refusal.CHECK_FAILED, f"a plain read carries no payload; value {value:#x}, verify_cpu {req.verify_cpu!r}", req, confirm)
+            return
+        verify = req.verify_cpu
+        if isinstance(verify, bool) or not isinstance(verify, int):
+            self._refuse(Refusal.CHECK_FAILED, f"a plain write needs a verify_cpu (an int), got {verify!r}", req, confirm)
+        cpu = int(req.cpu)
+        if verify == cpu:
+            self._refuse(Refusal.CHECK_FAILED, f"verify_cpu {verify} is the written cpu: the read-back must also look at another CPU", req, confirm)
+        if not self._policy.cpu_allowed(verify):
+            self._refuse(Refusal.CPU_NOT_ALLOWED, f"verify_cpu {verify} is not in the policy CPU set", req, confirm)
+        if self._policy.core_kind(verify) == self._policy.core_kind(cpu):
+            self._refuse(
+                Refusal.CHECK_FAILED,
+                f"verify_cpu {verify} is a {self._policy.core_kind(verify)} CPU like cpu {cpu}: the scope of this MSR is UNVERIFIED, so the "
+                "read-back must be on a CPU of the other core kind",
+                req,
+                confirm,
+            )
+        reader = self._policy.match_msr(req.msr, "read")
+        if reader is None or not reader.covers_cpu(cpu) or not reader.covers_cpu(verify):
+            self._refuse(
+                Refusal.CHECK_FAILED,
+                f"the read-back needs a msr_allow read entry for {int(req.msr):#x} covering cpu {cpu} and verify_cpu {verify}",
+                req,
+                confirm,
+            )
+        check = MSR_CHECKS.get(entry.check) if entry.check is not None else None
+        if check is None or baseline is None:
+            self._refuse(Refusal.CHECK_FAILED, f"write entry {entry.name!r} has no evaluable check", req, confirm)
+        assert check is not None and baseline is not None
+        try:
+            context = build_msr_context(self._policy, int(req.msr), oc_cap_words=self.oc_cap_words())
+            ok, detail = check(req, baseline, entry.params, context)
+        except Exception as exc:
+            ok, detail = False, f"check {entry.check!r} raised {type(exc).__name__}: {exc}"
+        if ok is not True:
+            self._refuse(Refusal.CHECK_FAILED, f"{entry.check}: {detail}", req, confirm)
+        problem = turbo_order_problem(value)  # D-049 / D-053 item 5: every plain write is a turbo ratio table (PLAIN_MSR_WRITABLE); none may rise with the active-core count
+        if problem is not None:
+            self._refuse(Refusal.CHECK_FAILED, problem, req, confirm)
+
+    def _send_and_verify_msr(self, req: MsrRequest, confirm: Confirmation, baseline: int | None) -> MsrResult:
+        assert self._msr_port is not None
+        cpu, msr, value = int(req.cpu), int(req.msr), int(req.value)
+        port = self._msr_port
+        if baseline is None:  # a read
+            try:
+                word = _require_u64(port.rdmsr(cpu, msr), f"rdmsr cpu {cpu} msr {msr:#x}")
+            except BaseException as exc:
+                self._record_quietly("error", req, confirm, detail=f"{type(exc).__name__}: {exc}", stage="rdmsr")
+                raise
+            self._msr_baselines[(cpu, msr)] = word
+            self._record("result", req, confirm, value=word)
+            gate_after = self._run_health("after")
+            if gate_after is not None and not gate_after[0]:
+                self._trip(f"health gate (after) says no: {gate_after[1]}", req, confirm)
+            return MsrResult(req, word, None, None)
+        verify_cpu = int(req.verify_cpu)  # type: ignore[arg-type]  # validated by _check_msr_request
+        try:
+            port.wrmsr(cpu, msr, value)
+        except BaseException as exc:
+            self._msr_journal.append(_MsrExecuted(req, baseline))  # outcome unknown: keep it revertible
+            self._record_quietly("error", req, confirm, detail=f"{type(exc).__name__}: {exc}", stage="wrmsr")
+            raise
+        self._msr_journal.append(_MsrExecuted(req, baseline))
+        self._record("result", req, confirm, baseline=baseline)
+        seen: list[int] = []
+        for where in (cpu, verify_cpu):
+            try:
+                seen.append(_require_u64(port.rdmsr(where, msr), f"read-back cpu {where} msr {msr:#x}"))
+            except BaseException as exc:
+                self._record_quietly("error", req, confirm, detail=f"{type(exc).__name__}: {exc}", stage="readback", readback_cpu=where)
+                raise
+            self._record("readback", req, confirm, value=seen[-1], verified=seen[-1] == value, readback_cpu=where, expected=f"0x{value:016X}")
+            if seen[-1] != value:
+                break  # the first mismatch trips; nothing is read further
+        verified = len(seen) == 2 and all(w == value for w in seen)
+        if not verified:
+            where = cpu if len(seen) == 1 else verify_cpu
+            self._trip(
+                f"read-back of plain msr {msr:#x} on cpu {where} gave {seen[-1]:#018x}, expected {value:#018x}"
+                + ("" if where == cpu else f" (written on cpu {cpu}: the MSR is not package-scoped, or the write did not take)"),
+                req,
+                confirm,
+            )
+        gate_after = self._run_health("after")
+        if gate_after is not None and not gate_after[0]:
+            self._trip(f"health gate (after) says no: {gate_after[1]}", req, confirm)
+        return MsrResult(req, seen[0], seen[1] if len(seen) == 2 else None, verified)
+
+    def _env_flag_set(self) -> bool:
+        try:
+            return self._env.get(ENV_FLAG) == "1"
+        except Exception:
+            return False
+
+    def _confirmation_problem(self, confirm: object) -> str | None:
+        if not isinstance(confirm, Confirmation):
+            return "no Confirmation given"
+        token, operator = confirm.token, confirm.operator
+        if not isinstance(token, str) or not isinstance(operator, str):
+            return "confirmation token and operator must be strings"
+        if not operator.strip():
+            return "confirmation operator is empty"
+        if not hmac.compare_digest(token.encode("utf-8", "surrogatepass"), self._token):
+            return "confirmation token does not match this session's token"
+        return None
+
+    def _check_request(self, req: Request, entry: AllowEntry, baseline: int | None, confirm: Confirmation) -> None:
+        """CHECK_FAILED: generic well-formedness, then the entry's named predicate (writes only)."""
+        data = req.data
+        if isinstance(data, bool) or not isinstance(data, int) or not 0 <= data <= _U32_MAX:
+            self._refuse(Refusal.CHECK_FAILED, f"data {data!r} is not a u32", req, confirm)
+        if not isinstance(req.purpose, str) or not req.purpose.strip():
+            self._refuse(Refusal.CHECK_FAILED, "purpose must be a non-blank string (it goes into the audit log)", req, confirm)
+        if entry.kind == "read":
+            if data != 0:
+                self._refuse(Refusal.CHECK_FAILED, f"a read carries no payload; data {data:#x} != 0", req, confirm)
+            return
+        check = CHECKS.get(entry.check) if entry.check is not None else None
+        if check is None or baseline is None:
+            self._refuse(Refusal.CHECK_FAILED, f"write entry {entry.name!r} has no evaluable check", req, confirm)
+        assert check is not None and baseline is not None
+        try:
+            ok, detail = check(req, baseline, entry.params, self._context(req))
+        except Exception as exc:
+            ok, detail = False, f"check {entry.check!r} raised {type(exc).__name__}: {exc}"
+        if ok is not True:
+            self._refuse(Refusal.CHECK_FAILED, f"{entry.check}: {detail}", req, confirm)
+
+    def _context(self, req: Request) -> CheckContext:
+        """What this session knows about ``req.cpu`` for the named checks (``cpu`` is an int: ``cpu_allowed`` ran first)."""
+        cpu, p1 = int(req.cpu), int(req.p1)
+        own = self._unit_words(cpu, p1)
+        return build_context(
+            self._policy,
+            cpu,
+            favored_word=self._baselines.get((int(Cmd.FAVORED_CORE_READ), cpu, 0, 0)),
+            fused_word=self._baselines.get((int(Cmd.VOLTAGE_FLOOR_READ), cpu, 0x11, 0)),
+            vf_word_sent=self._last_vf_word_sent(cpu),
+            max_voltage_word=self._baselines.get((int(Cmd.MAXIMUM_VOLTAGE_LIMIT_READ), cpu, 0, 0)),
+            ring_max_voltage_word=self._ring_max_voltage_word(),
+            oc_cap_words_of_kind=self.oc_cap_words(self._policy.core_kind(cpu)).values(),
+            unit_words=own,
+            favored_pending=self._favored_pending.get(cpu),
+            unit_peer_words=[(p2, w) for peer in sorted(self._peer_cpus(cpu, p1)) for p2, w in self._unit_words(peer, p1).items()],
+            point_table_read=self._unit_walked(cpu, p1, own),
+        )
+
+    def _unit_walked(self, cpu: int, p1: int, own: Mapping[int, int]) -> bool:
+        """B-01 (security review of 8604e1a, finding 1): the unit's point tables are known as far as its sum counts them. The request CPU's table walked (P2 1..k-1 known,
+        P2 k answered rc ``0x11``); for a core (``P1 != 2``) also every other CPU of its curve unit (``_peer_cpus``: the E cluster, whose words all count in the sum) -- its table
+        walked AND its ``P2 = 0`` word known (its whole-curve offset adds too). The ring (``P1 = 2``) is one package-level curve read through any CPU: the request CPU's walk."""
+        if not point_table_walked([p2 for p2 in own if p2 >= 1], self._past_table.get((cpu, p1))):
+            return False
+        if p1 == 2:
+            return True
+        for peer in self._peer_cpus(cpu, p1):
+            words = self._unit_words(peer, p1)
+            if 0 not in words or not point_table_walked([p2 for p2 in words if p2 >= 1], self._past_table.get((peer, p1))):
+                return False
+        return True
+
+    def _peer_cpus(self, cpu: int, p1: int) -> frozenset[int]:
+        """B-01: the other CPUs whose words count in the sum of ``cpu``'s curve on ``p1``: its E cluster for the cores (``Policy.curve_cpus``: a write may reach the whole
+        cluster), every CPU of the policy for the ring (``P1 = 2``, one package-level curve read and written through any CPU)."""
+        cpus = self._policy.cpus if p1 == 2 else self._policy.curve_cpus(cpu)
+        return frozenset(cpus) - {cpu}
+
+    def _unit_words(self, cpu: int, p1: int) -> dict[int, int]:
+        """B-01: P2 -> the ``0x10`` / ``0x11`` word in force on (``cpu``, ``p1``) as far as this session knows: the latest successful read of that P2, or a ``0x11`` sent since
+        that read (rc 0, or outcome unknown) -- the newest wins. A P2 never read is absent: the checks treat it as unknown."""
+        read, write = int(Cmd.VOLTAGE_FREQ_READ), int(Cmd.VOLTAGE_FREQ_WRITE)
+        words = {p2: w for (cmd, c, q1, p2), w in self._baselines.items() if cmd == read and c == cpu and q1 == p1}
+        for e in self._journal:  # oldest first, so the last write on the latest read of a P2 wins
+            r = e.request
+            if int(r.cmd) == write and int(r.cpu) == cpu and int(r.p1) == p1 and e.stamp == self._stamps.get((read, cpu, p1, int(r.p2)), 0):
+                words[int(r.p2)] = int(r.data)
+        return words
+
+    def _ring_max_voltage_word(self) -> int | None:
+        """The ``0x28 P1=2`` word read this session (the ring is package-level: whichever CPU answered); the lowest if several differ (fail closed)."""
+        words = [w for (cmd, _c, p1, p2), w in self._baselines.items() if cmd == int(Cmd.MAXIMUM_VOLTAGE_LIMIT_READ) and (p1, p2) == (2, 0)]
+        return min(words, key=hw_v_max_raw) if words else None
+
+    def oc_cap_words(self, kind: str | None = None) -> dict[int, int]:
+        """The ``0x01 P1=0 P2=0`` words read this session (cpu -> word), of one core kind if given: the CPU's own ratio limit (D-039, D-049) every raise is judged against."""
+        return {
+            c: w
+            for (cmd, c, p1, p2), w in self._baselines.items()
+            if cmd == int(Cmd.OC_CAPABILITY_READ) and (p1, p2) == (0, 0) and (kind is None or self._policy.core_kind(c) == kind)
+        }
+
+    def favored_words(self, kind: str | None = None) -> dict[int, int]:
+        """The ``0x1C`` words read this session (cpu -> word), of one core kind if given: """
+        words = {c: w for c, w in self._seed_favored.items() if kind is None or self._policy.core_kind(c) == kind}
+        words.update(
+            {
+                c: w
+                for (cmd, c, p1, p2), w in self._baselines.items()
+                if cmd == int(Cmd.FAVORED_CORE_READ) and (p1, p2) == (0, 0) and (kind is None or self._policy.core_kind(c) == kind)
+            }
+        )
+        return words
+
+    def _last_vf_word_sent(self, cpu: int) -> int | None:
+        """The data of the last 0x11 (P1=0, P2=0) this session sent to ``cpu`` that completed rc 0 (or whose outcome is unknown)."""
+        for e in reversed(self._journal):
+            r = e.request
+            if int(r.cmd) == int(Cmd.VOLTAGE_FREQ_WRITE) and int(r.cpu) == cpu and (int(r.p1), int(r.p2)) == (0, 0):
+                return r.data
+        return None
+
+    def _journal_entry(self, req: Request, baseline: int) -> _Executed:
+        cpu, cmd = int(req.cpu), int(req.cmd)
+        stamp = self._stamps.get((_READ_TWIN[cmd], cpu, int(req.p1), int(req.p2)), 0)
+        prior: int | None = None
+        if cmd == int(Cmd.VOLTAGE_FREQ_WRITE):
+            for e in reversed(self._journal):  # D-016: the state this write leaves behind is what undoing the *next* write restores
+                r = e.request
+                if (int(r.cmd), int(r.cpu), int(r.p1), int(r.p2)) == (cmd, cpu, int(req.p1), int(req.p2)) and e.stamp == stamp:
+                    prior = r.data
+                    break
+        return _Executed(
+            req,
+            baseline,
+            favored=self._baselines.get((int(Cmd.FAVORED_CORE_READ), cpu, 0, 0)),
+            fused=self._baselines.get((int(Cmd.VOLTAGE_FLOOR_READ), cpu, 0x11, 0)),
+            stamp=stamp,
+            prior=prior,
+        )
+
+    def _check_dwell(self, req: Request, confirm: Confirmation) -> None:
+        """DWELL: refuse (never sleep) if the previous executed operation finished less than ``min_dwell_s`` ago."""
+        if self._last_op_at is None or self._policy.min_dwell_s <= 0:
+            return
+        try:
+            elapsed = self._clock() - self._last_op_at
+        except Exception as exc:
+            self._refuse(Refusal.DWELL, f"clock unavailable: {exc!r}", req, confirm)
+        if not elapsed >= self._policy.min_dwell_s:  # `not >=` also refuses NaN
+            self._refuse_dwell(
+                f"{elapsed:.3f}s since the previous operation; minimum dwell is {self._policy.min_dwell_s:g}s "
+                "(check kernel/RAS/PCI health, then retry later -- the guard does not wait)",
+                self._policy.min_dwell_s - elapsed,
+                req,
+                confirm,
+            )
+
+    def _current_boot_id(self) -> str | None:
+        """This boot's id for the audit log; anything unusable becomes ``None`` (an unknown boot, still capped)."""
+        try:
+            value = self._boot_id_fn()
+        except Exception:
+            return None
+        if not isinstance(value, str):
+            return None
+        return value.strip() or None
+
+    def _audit_state(self, req: Request, confirm: object) -> AuditState:
+        """Read the audit log or refuse ``AUDIT_UNAVAILABLE``: cross-process limits that cannot be evaluated are not waived."""
+        try:
+            state = read_state(self._audit.path)
+            if not isinstance(state, AuditState):
+                raise TypeError(f"read_state returned {type(state).__name__}")
+            return state
+        except (AuditUnreadable, OSError) as exc:
+            self._refuse(Refusal.AUDIT_UNAVAILABLE, f"cannot evaluate the cross-process limits from the audit log: {exc}", req, confirm)
+        except Exception as exc:
+            self._refuse(
+                Refusal.AUDIT_UNAVAILABLE, f"audit log state unavailable: {type(exc).__name__}: {exc}", req, confirm
+            )
+
+    def _check_boot_limit(self, state: AuditState, boot_id: str | None, req: Request, confirm: object) -> None:
+        """BOOT_LIMIT: ``attempt`` records of this boot (reads included, read-backs excluded) vs ``max_operations_per_boot``."""
+        done = state.attempts_by_boot.get(boot_id, 0)
+        if done >= self._policy.max_operations_per_boot:
+            which = "an unknown boot (boot id unavailable)" if boot_id is None else f"boot {boot_id}"
+            self._refuse(
+                Refusal.BOOT_LIMIT,
+                f"{done} mailbox operation(s) already recorded for {which} in {self._audit.path}; per-boot limit is "
+                f"{self._policy.max_operations_per_boot} (SAFETY.md 'Mailbox-session discipline'; a reboot starts a new count, "
+                "or the human raises max_operations_per_boot in a reviewed policy)",
+                req,
+                confirm,
+            )
+
+    def _check_audit_dwell(self, state: AuditState, req: Request, confirm: object) -> None:
+        """DWELL across processes: refuse (never sleep) if the latest ``attempt`` in the audit log -- from any process -- is
+        younger than ``min_dwell_s``, or lies in the future (clock went backwards: the elapsed time cannot be trusted)."""
+        last = state.last_attempt_wall
+        if last is None:
+            return
+        dwell = self._policy.min_dwell_s
+        try:
+            now = self._wall_clock()
+            if isinstance(now, bool) or not isinstance(now, (int, float)) or not math.isfinite(now):
+                raise ValueError(f"wall clock returned {now!r}")
+        except Exception as exc:
+            self._refuse(Refusal.DWELL, f"wall clock unavailable: {exc!r}", req, confirm)
+        elapsed = now - last
+        if elapsed < -_FUTURE_SLACK_S:
+            self._refuse(
+                Refusal.DWELL,
+                f"previous mailbox operation at {_when(last)} is {-elapsed:.1f}s in the future (the wall clock went backwards?); "
+                "the dwell cannot be evaluated, so the request is refused",
+                req,
+                confirm,
+            )
+        if dwell > 0 and not elapsed >= dwell:  # `not >=` also refuses NaN
+            remaining = dwell - max(elapsed, 0.0)
+            self._refuse_dwell(
+                f"previous mailbox operation at {_when(last)}, possibly another process ({max(elapsed, 0.0):.1f}s ago); minimum "
+                f"dwell is {dwell:g}s -- wait about {math.ceil(remaining)}s, check kernel/RAS/PCI health, then retry "
+                "(the guard does not wait)",
+                remaining,
+                req,
+                confirm,
+            )
+
+    def _run_health(self, phase: str) -> tuple[bool, str] | None:
+        """``None`` when no gate is configured; otherwise ``(ok, detail)``. A gate that raises or answers oddly is *not ok*."""
+        if self._health_gate is None:
+            return None
+        try:
+            ok, detail = self._health_gate(phase)
+            if not isinstance(ok, bool):
+                raise TypeError(f"gate returned ok={ok!r}, not a bool")
+            return ok, str(detail)
+        except Exception as exc:
+            return False, f"health gate ({phase}) could not be evaluated: {type(exc).__name__}: {exc}"
+
+    # ---------------------------------------------------------------- lock file
+    _lock_held: lockfile.Held | None = None  # the per-transaction lock between _take_lock and _release_lock
+
+    def _take_lock(self, req: Request, confirm: Confirmation) -> None:
+        """LOCKED: the machine-wide per-transaction lock file (:mod:`linux_xtu.guard.lockfile`: ``O_EXCL`` create, an owner record of pid, start time
+        and boot id, a held ``flock`` on POSIX). A lock left by a process that is provably dead (pid gone or reused, or an earlier boot) is taken over,
+        with an ``error`` / ``LOCK_TAKEOVER`` audit record written first (a record that cannot be written leaves the lock alone and refuses). A live
+        owner, one that cannot be judged, an older version's pid-only file, a symlink, FIFO or alias are never touched: LOCKED, naming the holder."""
+
+        def audit_takeover(stale: lockfile.Stale) -> None:
+            self._record(
+                "error", req, confirm, reason="LOCK_TAKEOVER", stage="lock", lock=str(self._lock_path), stale_owner=stale.owner.as_json(),
+                detail=f"stale lock file {self._lock_path} ({stale.owner.describe()}) taken over: {stale.why}",
+            )
+
+        try:
+            since = float(self._wall_clock())
+        except Exception:
+            since = None
+        owner = lockfile.self_owner("mailbox transaction", since=since)
+        euid = getattr(os, "geteuid", None)
+        try:
+            self._lock_held = lockfile.acquire(self._lock_path, owner, euid=euid() if euid else None, on_takeover=audit_takeover)
+        except lockfile.LockBusy as exc:
+            self._refuse(Refusal.LOCKED, str(exc), req, confirm)
+        except lockfile.LockError as exc:
+            self._refuse(Refusal.LOCKED, str(exc), req, confirm)
+        except Exception as exc:  # the takeover's audit record could not be written: the stale lock was left alone
+            self._refuse(Refusal.LOCKED, f"lock file {self._lock_path} is stale but its takeover could not be audited ({type(exc).__name__}: {exc}); left alone", req, confirm)
+        if not self._legacy_locks:
+            return
+        # D-054, review F3: also the lock files of the earlier name (an old helper, CLI or script takes those): held for the same transaction, so neither
+        # side can send while the other is mid-transaction. Busy -> LOCKED, after our own lock is released again.
+        try:
+            self._legacy_held = lockfile.acquire_companions(self._legacy_locks, owner, euid=euid() if euid else None, on_takeover=audit_takeover)
+        except Exception as exc:
+            main, self._lock_held = self._lock_held, None
+            if main is not None:
+                try:
+                    lockfile.release(main)
+                except OSError:
+                    pass
+            text = str(exc) if isinstance(exc, (lockfile.LockBusy, lockfile.LockError)) else f"{type(exc).__name__}: {exc}"
+            self._refuse(Refusal.LOCKED, f"{text} - a lock of the project's earlier name (arltuner): code of that name is using the mailbox, or left this "
+                                         "file behind; nothing was sent", req, confirm)
+
+    _legacy_held: list[lockfile.Held] | None = None  # the companions of _lock_held (D-054)
+
+    def _release_lock(self, req: Request, confirm: Confirmation) -> None:
+        legacy, self._legacy_held = self._legacy_held, None
+        if legacy:
+            try:
+                lockfile.release_all(legacy)
+            except OSError as exc:
+                self._trip(f"could not remove a lock file of the earlier name: {exc!r}", req, confirm)
+                self._record_quietly("error", req, confirm, detail=f"legacy lock release failed: {exc!r}", stage="lock")
+        held, self._lock_held = self._lock_held, None
+        if held is None:
+            return
+        try:
+            lockfile.release(held)
+        except OSError as exc:  # a lock left behind (or one that was not ours) is a broken exclusion: make it loud and stop this guard
+            self._trip(f"could not remove lock file {self._lock_path}: {exc!r}", req, confirm)
+            self._record_quietly("error", req, confirm, detail=f"lock release failed: {exc!r}", stage="lock")
+
+    # ---------------------------------------------------------------- send
+    def _send_and_verify(self, req: Request, confirm: Confirmation, baseline: int | None, twin: int | None) -> Result:
+        cpu, cmd, p1, p2 = int(req.cpu), int(req.cmd), int(req.p1), int(req.p2)
+        write = twin is not None
+        polls, settle_ms = 0, None
+        try:
+            response = _require_response(self._transport.transact(cpu, cmd, p1, p2, req.data))
+        except BaseException as exc:
+            if write:
+                assert baseline is not None
+                self._note_favored_order(req)  # outcome unknown: count it as sent (the binding, the table walk it may void)
+                self._journal.append(self._journal_entry(req, baseline))  # outcome unknown: keep it revertible
+            self._record_quietly("error", req, confirm, detail=f"{type(exc).__name__}: {exc}", stage="transact")
+            raise
+        if write and response.rc == 0:
+            assert baseline is not None
+            self._note_favored_order(req)
+            self._journal.append(self._journal_entry(req, baseline))
+        self._record("result", req, confirm, response=response, baseline=baseline)
+        if not write:
+            if response.rc == 0:
+                self._baselines[(cmd, cpu, p1, p2)] = response.data
+                self._reads_done += 1
+                self._stamps[(cmd, cpu, p1, p2)] = self._reads_done
+            self._note_table_read(cpu, cmd, p1, p2, response.rc)
+            readback, verified = None, None
+        elif response.rc != 0:
+            readback, verified = None, None  # refused by pcode: nothing to verify, rc is in the Result and the audit log
+        else:
+            assert twin is not None
+            twin_req = Request(cpu, twin, p1, p2, 0, f"read-back of: {req.purpose}")
+            try:
+                readback = _require_response(self._transport.transact(cpu, twin, p1, p2, 0))
+            except BaseException as exc:
+                self._record_quietly("error", twin_req, confirm, detail=f"{type(exc).__name__}: {exc}", stage="readback")
+                raise
+            match = _READBACK_MATCH.get(cmd, _same_word)
+            verified = readback.rc == 0 and match(req.data, readback.data)
+            extra: dict[str, object] = {}
+            if cmd == int(Cmd.VOLTAGE_FREQ_WRITE) and p1 == 0 and p2 == 0:  # G-237: only the V target of a new OC point (the core-domain OC word, P1=0 P2=0 -- the measured case) lands late; the ratio, mode and offset must already be what was written
+                settle_from = self._clock()
+                while not verified and polls < len(OC_TARGET_SETTLE_S) and readback.rc == 0 and _late_v_target(req.data, readback.data):
+                    self._record("readback", twin_req, confirm, response=readback, pending=True, poll=polls, expected=f"0x{req.data:08X}")
+                    self._settle_wait(OC_TARGET_SETTLE_S[polls])
+                    try:
+                        readback = _require_response(self._transport.transact(cpu, twin, p1, p2, 0))
+                    except BaseException as exc:
+                        self._record_quietly("error", twin_req, confirm, detail=f"{type(exc).__name__}: {exc}", stage="readback", poll=polls + 1)
+                        raise
+                    polls += 1
+                    # a re-read is a WRMSR like the read-back and, like the first read-back, not counted in ``_ops``: the plan reserves one read-back per write, and a
+                    # counted re-read could push a planned apply over its exact session cap mid-way (G-237 review finding 1). Each re-read is still audited.
+                    verified = readback.rc == 0 and match(req.data, readback.data)
+                if polls:
+                    settle_ms = round(max(0.0, self._clock() - settle_from) * 1000.0, 3)
+                    extra = {"polls": polls, "settle_ms": settle_ms}
+            self._record(
+                "readback", twin_req, confirm, response=readback, verified=verified, expected=f"0x{req.data:08X}", **extra
+            )
+            if not verified:
+                self._trip(
+                    f"read-back of cmd {twin:#04x} cpu {cpu} gave rc {readback.rc} data {readback.data:#010x}, "
+                    f"expected {req.data:#010x}" + (f" after {polls} re-read(s)" if polls else ""),
+                    req,
+                    confirm,
+                )
+        gate_after = self._run_health("after")
+        if gate_after is not None and not gate_after[0]:
+            self._trip(f"health gate (after) says no: {gate_after[1]}", req, confirm)
+        return Result(req, response, readback, verified, polls, settle_ms)
+
+    def _note_favored_order(self, req: Request) -> None:
+        """Bookkeeping of a write sent (rc 0, or outcome unknown), before it joins the journal. B-04: a ``0x1D`` that does not restate the ratio of the last ``0x11 P2=0`` sent to
+        its CPU was sent ahead of it (frequency first, ``favored_ratio_follows_vf``) and binds that CPU's next ``0x11 P2=0`` to its ratio; that ``0x11`` clears the binding, and so
+        does a ``0x1D`` that restores the ``0x1C[7:0]`` read this session (the undo). B-01: a ``0x11 P2=0`` that may create an OC point (ratio above the CPU's top fused ratio, or
+        that ratio unknown) adds a slot to the point table, so it voids the table walks of its unit."""
+        cpu, cmd = int(req.cpu), int(req.cmd)
+        if cmd == int(Cmd.FAVORED_CORE_WRITE):
+            sent = self._last_vf_word_sent(cpu)
+            read = self._baselines.get((int(Cmd.FAVORED_CORE_READ), cpu, 0, 0))
+            if sent is not None and VfWord.from_u32(sent).ratio == req.data:
+                self._favored_pending.pop(cpu, None)
+            elif cpu in self._favored_pending and read is not None and req.data == read & 0xFF:
+                self._favored_pending.pop(cpu, None)
+            else:
+                self._favored_pending[cpu] = int(req.data)
+        elif cmd == int(Cmd.VOLTAGE_FREQ_WRITE) and int(req.p2) == 0:
+            if int(req.p1) == 0:
+                self._favored_pending.pop(cpu, None)
+            # the core's top fused ratio (0x09 P1=0x11 P2=0) judges a core word only; another domain's (the ring's) table is not read here, so its P2 = 0 write always voids the
+            # walk (security review of 8604e1a, finding 2: a ring OC point above the ring's top but below the core's left the ring walk standing)
+            top = fused_top_ratio(self._baselines.get((int(Cmd.VOLTAGE_FLOOR_READ), cpu, 0x11, 0))) if int(req.p1) == 0 else None
+            if top is None or VfWord.from_u32(req.data).ratio > top:
+                for peer in self._peer_cpus(cpu, int(req.p1)) | {cpu}:
+                    self._past_table.pop((peer, int(req.p1)), None)
+
+    def _note_table_read(self, cpu: int, cmd: int, p1: int, p2: int, rc: int) -> None:
+        """B-01: a ``0x10`` read of a point (``P2 >= 1``) answering :data:`RC_PAST_TABLE` marks the end of that CPU's table; a point that answers rc 0 at or past a recorded end
+        means the table grew (an OC slot): the mark is dropped and the walk must be read again."""
+        if cmd != int(Cmd.VOLTAGE_FREQ_READ) or p2 < 1:
+            return
+        end = self._past_table.get((cpu, p1))
+        if rc == RC_PAST_TABLE:
+            if end is None or p2 < end:
+                self._past_table[(cpu, p1)] = p2
+        elif rc == 0 and end is not None and p2 >= end:
+            del self._past_table[(cpu, p1)]
+
+    # ---------------------------------------------------------------- audit / trip
+    def _record(self, event: str, req: Request, confirm: object, **fields: object) -> None:
+        """Audit or raise: callers rely on a failed write of the record meaning *do not proceed*."""
+        self._audit.append(event, ts=self._wall_clock(), request=req, operator=_operator_of(confirm), **fields)  # type: ignore[arg-type]
+
+    def _record_quietly(self, event: str, req: Request, confirm: object, **fields: object) -> None:
+        try:
+            self._record(event, req, confirm, **fields)
+        except Exception:
+            pass  # already failing; never let the audit problem mask the original exception
+
+    def _refuse_dwell(self, detail: str, remaining: float, req: Request, confirm: object) -> NoReturn:
+        self._refuse(Refusal.DWELL, detail, req, confirm, retry_after_s=remaining if math.isfinite(remaining) else None)
+
+    def _refuse(
+        self, reason: Refusal, detail: str, req: Request, confirm: object, *, retry_after_s: float | None = None
+    ) -> NoReturn:
+        try:
+            self._record("refused", req, confirm, reason=reason.value, detail=detail)
+        except Exception as exc:
+            detail = f"{detail} [audit write failed: {type(exc).__name__}: {exc}]"
+        raise GuardRefused(reason, detail, retry_after_s)
+
+    def _trip(self, why: str, req: Request, confirm: object) -> None:
+        first = not self._tripped
+        self._tripped = True
+        if first:
+            self._trip_reason = why
+            self._record_quietly("trip", req, confirm, reason="TRIPPED", detail=why)

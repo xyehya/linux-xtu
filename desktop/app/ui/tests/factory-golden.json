@@ -1,0 +1,305 @@
+{
+ "_about": "G-250 golden: measured = the hardware model (effective_curve) applied to `factory` with the offsets in `words`; expect = derive_factory / lib/factory.js deriveUnit. Words: [P2=0 OC word, point 1..n, OC point word]. Generated once; checked by tests/test_vfmodel.py and desktop/app/ui/tests/g250.factory.test.mjs.",
+ "cases": [
+  {
+   "name": "p0_live_offsets",
+   "note": "P0 as read live: point 5 -49.8, 6 -28.3, 7 -14.6, 8 -70.3 mV; 57x is lifted by the clamp to the 56x voltage; top = fused 0x09 1.4258 V",
+   "point_ratios": [
+    8,
+    20,
+    30,
+    48,
+    53,
+    55,
+    56,
+    57
+   ],
+   "factory": {
+    "8": 0.693,
+    "20": 0.721,
+    "30": 0.811,
+    "48": 1.041,
+    "53": 1.216,
+    "55": 1.299,
+    "56": 1.386,
+    "57": 1.4258
+   },
+   "words": [
+    "0x00000000",
+    "0x00000008",
+    "0x00000014",
+    "0x0000001e",
+    "0x00000030",
+    "0xf9a00035",
+    "0xfc600037",
+    "0xfe200038",
+    "0xf7000039"
+   ],
+   "measured": {
+    "8": 0.693,
+    "20": 0.721,
+    "30": 0.811,
+    "48": 1.041,
+    "53": 1.1662,
+    "55": 1.2707,
+    "56": 1.3714,
+    "57": 1.3714
+   },
+   "fused": [
+    57,
+    1.4258
+   ],
+   "expect": [
+    {
+     "ratio": 8,
+     "v": 0.693,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 20,
+     "v": 0.721,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 30,
+     "v": 0.811,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 48,
+     "v": 1.041,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 53,
+     "v": 1.216,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 55,
+     "v": 1.299,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 56,
+     "v": 1.386,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 57,
+     "v": 1.4258,
+     "src": "fused",
+     "clamped": true,
+     "check_mv": 15.9
+    }
+   ]
+  },
+  {
+   "name": "p0_whole_curve_and_points",
+   "note": "whole-curve -20 mV adds to the point offsets; nothing clamped; the derived top agrees with the fused word",
+   "point_ratios": [
+    8,
+    20,
+    30,
+    48,
+    53,
+    55,
+    56,
+    57
+   ],
+   "factory": {
+    "8": 0.693,
+    "20": 0.721,
+    "30": 0.811,
+    "48": 1.041,
+    "53": 1.216,
+    "55": 1.299,
+    "56": 1.386,
+    "57": 1.4258
+   },
+   "words": [
+    "0xfd800000",
+    "0x00000008",
+    "0xff600014",
+    "0x0000001e",
+    "0xfe800030",
+    "0x00000035",
+    "0xfc200037",
+    "0x00000038",
+    "0x00000039"
+   ],
+   "measured": {
+    "8": 0.6735,
+    "20": 0.6966,
+    "30": 0.7915,
+    "48": 1.0097,
+    "53": 1.1965,
+    "55": 1.2492,
+    "56": 1.3665,
+    "57": 1.4063
+   },
+   "fused": [
+    57,
+    1.4258
+   ],
+   "expect": [
+    {
+     "ratio": 8,
+     "v": 0.693,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 20,
+     "v": 0.721,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 30,
+     "v": 0.811,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 48,
+     "v": 1.041,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 53,
+     "v": 1.216,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 55,
+     "v": 1.299,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 56,
+     "v": 1.386,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 57,
+     "v": 1.4258,
+     "src": "fused",
+     "clamped": false,
+     "check_mv": 0.0
+    }
+   ]
+  },
+  {
+   "name": "ec_point_offsets_with_clamp",
+   "note": "E cluster: OC word 47x is not a fused point; 42x (-80 mV) sits on the 38x level: clamped, interpolated between 38x and the fused 46x",
+   "point_ratios": [
+    8,
+    18,
+    28,
+    38,
+    42,
+    46
+   ],
+   "factory": {
+    "8": 0.7,
+    "18": 0.74,
+    "28": 0.8,
+    "38": 0.93,
+    "42": 0.96,
+    "46": 1.0
+   },
+   "words": [
+    "0xfec0002f",
+    "0x00000008",
+    "0xfec00012",
+    "0xff60001c",
+    "0xfd800026",
+    "0xf5c0002a",
+    "0xfe20002e",
+    "0x0004b02f"
+   ],
+   "measured": {
+    "8": 0.6902,
+    "18": 0.7205,
+    "28": 0.7854,
+    "38": 0.9007,
+    "42": 0.9007,
+    "46": 0.9756
+   },
+   "fused": [
+    46,
+    1.0
+   ],
+   "expect": [
+    {
+     "ratio": 8,
+     "v": 0.7,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 18,
+     "v": 0.74,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 28,
+     "v": 0.8,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 38,
+     "v": 0.93,
+     "src": "derived",
+     "clamped": false,
+     "check_mv": null
+    },
+    {
+     "ratio": 42,
+     "v": 0.965,
+     "src": "interpolated",
+     "clamped": true,
+     "check_mv": null
+    },
+    {
+     "ratio": 46,
+     "v": 1.0,
+     "src": "fused",
+     "clamped": false,
+     "check_mv": 0.0
+    }
+   ]
+  }
+ ]
+}

@@ -1,0 +1,294 @@
+/* kit.html only (dev page, not linked from the app, not loaded by index.html): page layout for the component specimens. */
+
+html.kit,
+html.kit body {
+  height: auto;
+  overflow: auto;
+}
+
+html.kit body {
+  background: var(--n0);
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.kit-top {
+  display: flex;
+  align-items: center;
+  gap: var(--s4);
+  height: 48px;
+  padding: 0 var(--s6);
+  border-bottom: var(--bw) solid var(--rule-strong);
+}
+
+.kit-top .lx-wordmark {
+  font-size: var(--t-lg);
+}
+
+.kit-top-t {
+  color: var(--fg2);
+}
+
+.kit-top-m {
+  margin-left: auto;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.kit-main {
+  padding: var(--s6) var(--s6) var(--s10);
+}
+
+.kit-sec {
+  margin-bottom: var(--s10);
+}
+
+.kit-h {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin: 0 0 var(--s4);
+  padding-bottom: var(--s2);
+  border-bottom: var(--bw) solid var(--rule-strong);
+  font-size: var(--t-lg);
+  font-weight: var(--w-semi);
+}
+
+.kit-h .kit-n {
+  font-family: var(--mono);
+  font-weight: var(--w-reg);
+  color: var(--fg3);
+}
+
+.kit-h .kit-ref {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  font-weight: var(--w-reg);
+  color: var(--fg3);
+}
+
+.kit-sub {
+  margin: var(--s5) 0 var(--s2);
+  color: var(--fg3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+
+.kit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--s4) var(--s6);
+}
+
+.kit-row--c {
+  align-items: center;
+}
+
+.kit-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kit-cap {
+  color: var(--fg3);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.kit-grid2 {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s6);
+}
+
+.kit-grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--s4);
+}
+
+.kit-stage {
+  border: var(--bw) solid var(--rule-strong);
+  background: var(--n0);
+}
+
+.kit-pad {
+  padding: var(--s3);
+}
+
+.kit-panel-demo {
+  border: var(--bw) solid var(--rule-strong);
+}
+
+/* swatches */
+.kit-sw {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--rule-strong);
+  border: var(--bw) solid var(--rule-strong);
+}
+
+.kit-sw > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--s2) var(--s3) var(--s3);
+  background: var(--n1);
+  font-size: var(--t-sm);
+}
+
+.kit-chip {
+  height: 28px;
+  margin-bottom: 6px;
+  border: var(--bw) solid var(--rule);
+}
+
+.kit-sw b {
+  font-family: var(--mono);
+  font-weight: var(--w-med);
+  color: var(--fg);
+}
+
+.kit-sw span {
+  color: var(--fg3);
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.kit-sw i {
+  font-style: normal;
+  color: var(--fg2);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+}
+
+.c-n0 { background: var(--n0); }
+.c-n1 { background: var(--n1); }
+.c-n2 { background: var(--n2); }
+.c-n3 { background: var(--n3); }
+.c-rule { background: var(--rule); }
+.c-rule-strong { background: var(--rule-strong); }
+.c-edge { background: var(--edge); }
+.c-fg { background: var(--fg); }
+.c-fg-read { background: var(--fg-read); }
+.c-fg2 { background: var(--fg2); }
+.c-fg3 { background: var(--fg3); }
+.c-set { background: var(--set); }
+.c-write { background: var(--write); }
+.c-run { background: var(--run); }
+.c-ok { background: var(--ok); }
+.c-warn { background: var(--warn); }
+.c-fault { background: var(--fault); }
+.c-lit-info { background: var(--lit-info); }
+.c-focus { background: var(--focus); }
+.c-ch-p { background: var(--ch-p); }
+.c-ch-e { background: var(--ch-e); }
+.c-ch-r { background: var(--ch-r); }
+
+.kit-ramp {
+  display: flex;
+  height: 14px;
+  margin-top: 6px;
+}
+
+.kit-ramp > i {
+  flex: 1 1 0;
+}
+
+.r-p0 { background: var(--ch-p-0); } .r-p1 { background: var(--ch-p-1); } .r-p2 { background: var(--ch-p-2); } .r-p3 { background: var(--ch-p-3); }
+.r-p4 { background: var(--ch-p-4); } .r-p5 { background: var(--ch-p-5); } .r-p6 { background: var(--ch-p-6); } .r-p7 { background: var(--ch-p-7); }
+.r-e0 { background: var(--ch-e-0); } .r-e1 { background: var(--ch-e-1); } .r-e2 { background: var(--ch-e-2); } .r-e3 { background: var(--ch-e-3); }
+
+/* type specimens */
+.kit-type {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: 10px var(--s4);
+  align-items: baseline;
+}
+
+.kit-type .kit-cap {
+  text-align: right;
+}
+
+.t-2xl { font-size: var(--t-2xl); line-height: var(--lh-2xl); font-weight: var(--w-semi); }
+.t-xl { font-size: var(--t-xl); line-height: var(--lh-xl); font-weight: var(--w-semi); }
+.t-lg { font-size: var(--t-lg); line-height: var(--lh-lg); font-weight: var(--w-semi); }
+.t-md { font-size: var(--t-md); line-height: var(--lh-md); }
+.t-sm { font-size: var(--t-sm); line-height: var(--lh-sm); }
+.t-read { font-size: var(--t-read); line-height: var(--lh-read); color: var(--fg-read); max-width: var(--measure); }
+.t-mono-lg { font-family: var(--mono); font-size: var(--t-2xl); line-height: var(--lh-2xl); font-weight: var(--w-med); }
+
+/* static stand-ins for runtime state the kit cannot produce (progress fraction, a fixed sheet) */
+.kit-p35 { --p: 0.35; }
+.kit-p62 { --p: 0.62; }
+
+.kit-sheet-host {
+  position: relative;
+  height: 520px;
+  overflow: hidden;
+  border: var(--bw) solid var(--rule-strong);
+  background: var(--n0);
+}
+
+.kit-sheet-host .kit-under {
+  padding: var(--s4);
+  color: var(--fg3);
+}
+
+.kit-pop-host {
+  position: relative;
+  height: 230px;
+}
+
+.kit-pop-host .lx-pop {
+  left: 0;
+  top: 28px;
+}
+
+.kit-toast-host {
+  position: relative;
+  height: 200px;
+  border: var(--bw) dashed var(--rule);
+}
+
+.kit-frame {
+  border: var(--bw) solid var(--rule-strong);
+}
+
+.kit-frame .lx-top,
+.kit-frame .lx-head,
+.kit-frame .lx-ctx,
+.kit-frame .lx-pend,
+.kit-frame .lx-read {
+  position: static;
+}
+
+.kit-railbox {
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  height: 330px;
+}
+
+.kit-railbox .lx-rail {
+  grid-area: auto;
+}
+
+.kit-railbox .kit-railwork {
+  background: var(--n1);
+  padding: var(--s4);
+  color: var(--fg3);
+}
+
+.kit-w360 { width: 360px; }
+.kit-w520 { max-width: 520px; }
+.kit-mt { margin-top: var(--s3); }

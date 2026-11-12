@@ -1,0 +1,1012 @@
+"""``stress.start`` / ``stress.stop`` / ``stress.list`` through a real helper on pipes, over FAKE tool binaries (recorded outputs), a fake cpufreq sysfs and the
+SimModel. No real stress-ng / stressapptest, no sudo, no hardware, no mailbox."""
+from __future__ import annotations
+
+import errno
+import json
+import os
+import signal
+import stat
+import subprocess
+import tempfile
+import threading
+import time
+import types
+import unittest
+from pathlib import Path
+from typing import Any
+
+from linux_xtu.health import HealthSnapshot
+from linux_xtu.helper.ops_measure import CAP_ATTR, EPP_ATTR
+from linux_xtu.helper.ops_stress import Invoker, InvokerError, StressWiring, _cap_khz, _stop_child, default_invoker, helper_invoker, invoker_for_uid, prepare_workdir
+from linux_xtu.helper.trust import TrustError
+from linux_xtu.stress import CHILD_ENV, KernelLogWatch
+
+from tests.stress._support import (
+    FakeKlog, FakeWorkdirs, RecordingKillpg, RecordingPopen, alive, health_snapshot, make_fake, sim_sampler, stress_wiring,
+)
+
+from ._measure_support import ORIGINAL_EPP, MeasureCase
+from ._support import Harness, error_code
+
+RESULT_KEYS = {
+    "id", "kind", "started", "ended", "duration_s", "elapsed_s", "stopped_by", "errors", "error_lines", "achieved", "cap_valid", "max_temp_c", "max_pkg_w",
+    "mce_new", "health", "record_path", "state_fingerprint",
+}
+START = {"kind": "cpu", "duration_s": 30}
+
+
+class StressCase(MeasureCase):
+    def setUp(self) -> None:
+        super().setUp()
+        self.popen = RecordingPopen()
+        self.killpg = RecordingKillpg()
+        self.klog = FakeKlog()
+        self.workdirs = FakeWorkdirs(self.tmp / "workdirs")
+
+    def swiring(self, **overrides: Any) -> StressWiring:
+        values: dict[str, Any] = dict(
+            popen=self.popen, killpg=self.killpg, klog_factory=lambda: KernelLogWatch([self.klog]),
+            sample_fn=sim_sampler(self.cpufreq, self.model), workdir_fn=self.workdirs,
+        )
+        values.update(overrides)
+        return stress_wiring(self.tmp, **values)
+
+    def start_stress(self, wiring: StressWiring | None = None, *, measure: bool = True) -> Harness:
+        for old in self.harnesses:  # one helper at a time (the instance lock is per path)
+            old.stop()
+        h = Harness(self.config())
+        h.helper.measure_wiring = self.wiring() if measure else None
+        h.helper.stress_wiring = wiring or self.swiring()
+        self.harnesses.append(h)
+        h.start()
+        return h
+
+    def fake(self, name: str, recorded: str, rc: int = 0, **kw: Any) -> str:
+        return make_fake(self.tmp, name, recorded, rc, **kw)
+
+    def run_stress(self, h: Harness, args: dict[str, Any] | None = None, *, rid: str = "s") -> dict[str, Any]:
+        return h.call(rid, "stress.start", {**START, **(args or {})}, timeout=30)
+
+    def begin(self, h: Harness, args: dict[str, Any], rid: str = "s") -> None:
+        h.send({"id": rid, "op": "stress.start", "args": args})
+
+    def wait_pid(self, tool: str) -> int:
+        pidfile = Path(tool + ".pid")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if pidfile.exists() and pidfile.read_text().strip().isdigit():
+                return int(pidfile.read_text())
+            time.sleep(0.02)
+        raise AssertionError("the fake tool never wrote its grandchild pid")
+
+    def wait_dead(self, pid: int, timeout: float = 5.0) -> bool:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if not alive(pid):
+                return True
+            time.sleep(0.02)
+        return False
+
+
+# =============================================================================================================================================
+class ValidationTests(StressCase):
+    def test_bad_arguments_are_refused_before_anything_starts(self) -> None:
+        h = self.start_stress()
+        bad: list[dict[str, Any]] = [
+            {}, {"kind": "disk", "duration_s": 60}, {"kind": "cpu"}, {"kind": "cpu", "duration_s": 29}, {"kind": "cpu", "duration_s": 3601},
+            {"kind": "cpu", "duration_s": "60"}, {"kind": "cpu", "duration_s": True}, {"kind": "cpu", "duration_s": 60.0},
+            {"kind": "cpu", "duration_s": 60, "method": "int64"}, {"kind": "cpu", "duration_s": 60, "method": "avx"},
+            {"kind": "cpu", "duration_s": 60, "units": []}, {"kind": "cpu", "duration_s": 60, "units": ["Q1"]}, {"kind": "cpu", "duration_s": 60, "units": ["P0", "P0"]},
+            {"kind": "cpu", "duration_s": 60, "units": "P0"}, {"kind": "cpu", "duration_s": 60, "ratio_cap": 7}, {"kind": "cpu", "duration_s": 60, "ratio_cap": 61},
+            {"kind": "cpu", "duration_s": 60, "ratio_cap": "40"}, {"kind": "cpu", "duration_s": 60, "ratio_cap": True}, {"kind": "cpu", "duration_s": 60, "ratio_cap": 40.0},
+            {"kind": "cpu", "duration_s": 60, "memory_mb": 1024}, {"kind": "cpu", "duration_s": 60, "taskset": "0"},
+            {"kind": "memory", "duration_s": 60, "method": "integer"}, {"kind": "memory", "duration_s": 60, "units": ["P0"]},
+            {"kind": "memory", "duration_s": 60, "memory_mb": 255}, {"kind": "memory", "duration_s": 60, "memory_mb": "1024"}, {"kind": "memory", "duration_s": 60, "memory_mb": True},
+        ]
+        for i, args in enumerate(bad):
+            with self.subTest(args=args):
+                self.assertEqual(error_code(h.call(f"b{i}", "stress.start", args)), "BAD_REQUEST")
+        self.assertEqual(self.popen.calls, [])
+        self.assertEqual(h.helper.machine.state.value, "idle")
+
+    def test_stop_and_list_take_no_arguments(self) -> None:
+        h = self.start_stress()
+        self.assertEqual(error_code(h.call("a", "stress.stop", {"op_id": "x"})), "BAD_REQUEST")
+        self.assertEqual(error_code(h.call("b", "stress.list", {"n": 1})), "BAD_REQUEST")
+
+    def test_defaults_are_the_integer_method_on_all_twelve_units(self) -> None:
+        h = self.start_stress()
+        reply = self.run_stress(h)
+        self.assertTrue(reply["ok"], reply)
+        cmd, _ = self.popen.calls[0]
+        self.assertEqual(cmd[1:11], ["--cpu", "24", "--taskset", "0-23", "--cpu-method", "int64", "--verify", "--metrics-brief", "--timeout", "30s"])
+        self.assertEqual(cmd[11:], ["--temp-path", self.workdirs.made[0]])
+        record = json.loads(Path(reply["result"]["record_path"]).read_text())
+        self.assertEqual((record["method"], record["units"], record["ratio_cap"], record["memory_mb"]), ("integer", [f"P{n}" for n in range(8)] + [f"EC{n}" for n in range(4)], None, None))
+
+
+class _FakeFs:
+    """lstat / mkdtemp / chown / rmtree over a dict of fake entries, for ``prepare_workdir``."""
+
+    def __init__(self, entries: dict[str, Any] | None = None, euid: int = 0) -> None:
+        self.entries: dict[str, Any] = dict(entries or {})
+        self.euid, self.chowned, self.removed, self.n = euid, [], [], 0
+
+    @staticmethod
+    def node(kind: str = "dir", uid: int = 1000, mode: int = 0o700, ino: int = 1) -> Any:
+        bits = {"dir": stat.S_IFDIR, "link": stat.S_IFLNK, "file": stat.S_IFREG}[kind]
+        return types.SimpleNamespace(st_mode=bits | mode, st_uid=uid, st_dev=1, st_ino=ino)
+
+    def lstat(self, path: str) -> Any:
+        if path not in self.entries:
+            raise FileNotFoundError(2, "missing", path)
+        return self.entries[path]
+
+    def mkdtemp(self, prefix: str = "", dir: str = "") -> str:
+        self.n += 1
+        path = f"{dir}/{prefix}{self.n}"
+        self.entries[path] = self.node(uid=self.euid, mode=0o700, ino=100 + self.n)
+        return path
+
+    def chown(self, path: str, uid: int, gid: int) -> None:
+        self.chowned.append((path, uid, gid))
+        self.entries[path] = types.SimpleNamespace(**{**vars(self.entries[path]), "st_uid": uid})
+
+    def rmtree(self, path: str) -> None:
+        self.removed.append(path)
+        del self.entries[path]
+
+    def prepare(self, uid: int = 1000, **kw: Any) -> Any:
+        return prepare_workdir(
+            Invoker(uid, 1001, "alice"), lstat_fn=self.lstat, mkdtemp_fn=self.mkdtemp, chown_fn=kw.pop("chown_fn", self.chown), rmtree_fn=self.rmtree, euid=self.euid,
+            runtime_root="/run/user", tmp_root="/tmp", **kw,
+        )
+
+
+class WorkdirTests(unittest.TestCase):
+    def test_a_private_runtime_dir_of_the_user_is_used_as_is(self) -> None:
+        fs = _FakeFs({"/run/user/1000": _FakeFs.node()})
+        wd = fs.prepare()
+        self.assertEqual(wd.path, "/run/user/1000")
+        self.assertIsNone(wd.cleanup())
+        self.assertEqual((fs.n, fs.chowned, fs.removed), (0, [], []), "nothing created, nothing removed")
+
+    def test_a_runtime_dir_that_is_not_safe_falls_back_to_a_fresh_tmp_dir(self) -> None:
+        cases = {
+            "missing": {},
+            "symlink": {"/run/user/1000": _FakeFs.node("link", mode=0o777)},
+            "a file": {"/run/user/1000": _FakeFs.node("file")},
+            "someone else's": {"/run/user/1000": _FakeFs.node(uid=1234)},
+            "root's": {"/run/user/1000": _FakeFs.node(uid=0)},
+            "group readable": {"/run/user/1000": _FakeFs.node(mode=0o750)},
+            "world writable": {"/run/user/1000": _FakeFs.node(mode=0o777)},
+        }
+        for name, entries in cases.items():
+            with self.subTest(name):
+                fs = _FakeFs(entries)
+                wd = fs.prepare()
+                self.assertEqual(wd.path, "/tmp/linux-xtu-stress-1")
+                self.assertEqual(fs.chowned, [("/tmp/linux-xtu-stress-1", 1000, 1001)], "chowned to the user's uid / gid before exec")
+                self.assertIsNone(wd.cleanup())
+                self.assertEqual(fs.removed, ["/tmp/linux-xtu-stress-1"])
+
+    def test_the_runtime_dir_of_another_uid_is_never_looked_at(self) -> None:
+        fs = _FakeFs({"/run/user/1000": _FakeFs.node(uid=1000)})
+        self.assertEqual(fs.prepare(uid=1001).path, "/tmp/linux-xtu-stress-1")
+
+    def test_a_tmp_dir_that_is_not_ours_is_not_handed_out(self) -> None:
+        for name, node in {"foreign owner": _FakeFs.node(uid=4242), "open mode": _FakeFs.node(uid=0, mode=0o777), "symlink": _FakeFs.node("link", uid=0)}.items():
+            with self.subTest(name):
+                fs = _FakeFs()
+
+                def odd(prefix: str = "", dir: str = "", fs: _FakeFs = fs, node: Any = node) -> str:
+                    fs.entries[f"{dir}/x"] = node
+                    return f"{dir}/x"
+
+                fs.mkdtemp = odd  # type: ignore[method-assign]
+                with self.assertRaises(OSError):
+                    fs.prepare()
+                self.assertEqual(fs.chowned, [])
+
+    def test_a_failed_chown_refuses_and_removes_the_directory(self) -> None:
+        fs = _FakeFs()
+
+        def denied(path: str, uid: int, gid: int) -> None:
+            raise PermissionError(1, "Operation not permitted")
+
+        with self.assertRaises(PermissionError):
+            fs.prepare(chown_fn=denied)
+        self.assertEqual(fs.removed, ["/tmp/linux-xtu-stress-1"])
+
+    def test_a_chown_that_did_not_take_refuses(self) -> None:
+        fs = _FakeFs()
+        with self.assertRaises(OSError):
+            fs.prepare(chown_fn=lambda path, uid, gid: None)
+        self.assertEqual(fs.removed, ["/tmp/linux-xtu-stress-1"])
+
+    def test_a_directory_swapped_for_something_else_is_left_alone(self) -> None:
+        fs = _FakeFs()
+        wd = fs.prepare()
+        fs.entries[wd.path] = _FakeFs.node("link", uid=1000, ino=999)  # the user replaced it by a symlink while the child ran
+        self.assertIn("left alone", wd.cleanup() or "")
+        self.assertEqual(fs.removed, [])
+        fs.entries[wd.path] = _FakeFs.node("dir", uid=1000, ino=555)  # or by another directory
+        self.assertIn("left alone", wd.cleanup() or "")
+        self.assertEqual(fs.removed, [])
+
+    def test_a_real_directory_is_private_and_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            me = Invoker(os.getuid(), os.getgid(), "me")
+            wd = prepare_workdir(me, runtime_root=os.path.join(root, "nope"), tmp_root=root)
+            path = Path(wd.path)
+            self.assertEqual(path.parent, Path(root))
+            self.assertEqual(stat.S_IMODE(path.lstat().st_mode), 0o700)
+            (path / "inner").mkdir()
+            (path / "inner" / "f").write_text("x")
+            self.assertIsNone(wd.cleanup())
+            self.assertFalse(path.exists())
+
+
+class InvokerTests(unittest.TestCase):
+    @staticmethod
+    def pw(uid: int = 1000, gid: int = 1001, name: str = "alice") -> Any:
+        return types.SimpleNamespace(pw_uid=uid, pw_gid=gid, pw_name=name)
+
+    def test_the_invoking_user_comes_from_pkexec_uid_on_the_stdio_dev_path(self) -> None:
+        self.assertEqual(default_invoker({"PKEXEC_UID": "1000"}, lambda uid: self.pw(uid)), Invoker(1000, 1001, "alice"))
+
+    def test_anything_else_is_refused(self) -> None:
+        def missing(uid: int) -> Any:
+            raise KeyError(uid)
+
+        for env in ({}, {"PKEXEC_UID": ""}, {"PKEXEC_UID": "abc"}, {"PKEXEC_UID": "-1"}, {"PKEXEC_UID": "1000 "}, {"PKEXEC_UID": "0"}, {"PKEXEC_UID": "00"}, {"PKEXEC_UID": "1" * 11}):
+            with self.subTest(env=env), self.assertRaises(InvokerError):
+                default_invoker(env, lambda uid: self.pw(uid))
+        with self.assertRaises(InvokerError):
+            default_invoker({"PKEXEC_UID": "1234"}, missing)
+        with self.assertRaises(InvokerError):
+            default_invoker({"PKEXEC_UID": "1234"}, lambda uid: self.pw(uid + 1))  # the database answered for someone else
+
+
+class PeerInvokerTests(unittest.TestCase):
+    """D-043: in socket mode the invoker is the connected peer's uid - never an environment variable."""
+
+    pw = staticmethod(InvokerTests.pw)
+
+    def helper(self, **kw: Any) -> Any:
+        return types.SimpleNamespace(**kw)
+
+    def test_the_peer_uid_is_the_invoker(self) -> None:
+        h = self.helper(socket_mode=True, peer_uid=1000)
+        self.assertEqual(helper_invoker(h, lambda uid: self.pw(uid)), Invoker(1000, 1001, "alice"))
+
+    def test_the_environment_is_ignored_in_socket_mode(self) -> None:
+        h = self.helper(socket_mode=True, peer_uid=1000)
+        self.assertEqual(helper_invoker(h, lambda uid: self.pw(uid), {"PKEXEC_UID": "4242"}).uid, 1000)
+        with self.assertRaises(InvokerError):  # no peer: the variable is not a fallback
+            helper_invoker(self.helper(socket_mode=True, peer_uid=None), lambda uid: self.pw(uid), {"PKEXEC_UID": "1000"})
+
+    def test_root_as_the_peer_has_no_invoker(self) -> None:
+        with self.assertRaises(InvokerError):
+            helper_invoker(self.helper(socket_mode=True, peer_uid=0), lambda uid: self.pw(uid))
+        with self.assertRaises(InvokerError):
+            invoker_for_uid(0, lambda uid: self.pw(uid))
+
+    def test_a_peer_unknown_to_passwd_has_no_invoker(self) -> None:
+        def missing(uid: int) -> Any:
+            raise KeyError(uid)
+
+        with self.assertRaises(InvokerError):
+            helper_invoker(self.helper(socket_mode=True, peer_uid=4321), missing)
+
+    def test_the_peer_is_read_at_call_time(self) -> None:
+        h = self.helper(socket_mode=True, peer_uid=1000)
+        fn = lambda: helper_invoker(h, lambda uid: self.pw(uid, name=f"u{uid}"))  # noqa: E731
+        self.assertEqual(fn().user, "u1000")
+        h.peer_uid = 2000
+        self.assertEqual(fn().user, "u2000")
+        h.peer_uid = None
+        with self.assertRaises(InvokerError):
+            fn()
+
+    def test_not_socket_mode_falls_back_to_the_environment(self) -> None:
+        self.assertEqual(helper_invoker(self.helper(socket_mode=False, peer_uid=None), lambda uid: self.pw(uid), {"PKEXEC_UID": "1000"}).uid, 1000)
+
+
+class NoInvokerTests(StressCase):
+    def test_a_missing_invoker_refuses_the_run(self) -> None:
+        def nobody() -> Invoker:
+            raise InvokerError("PKEXEC_UID is not set")
+
+        h = self.start_stress(self.swiring(invoker_fn=nobody))
+        reply = self.run_stress(h)
+        self.assertEqual(error_code(reply), "REFUSED")
+        self.assertEqual(reply["error"]["detail"]["check"], "NO_INVOKER")
+        self.assertEqual(self.popen.calls, [])
+        self.assertEqual(h.helper.machine.state.value, "idle")
+
+
+# =============================================================================================================================================
+class RunTests(StressCase):
+    def test_a_cpu_run_gives_the_contract_result(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", delay=0.3)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        reply = self.run_stress(h, {"units": ["EC1", "P0"], "method": "integer"})
+        self.assertTrue(reply["ok"], reply)
+        r = reply["result"]
+        self.assertEqual(set(r), RESULT_KEYS)
+        self.assertEqual((r["kind"], r["duration_s"], r["stopped_by"], r["errors"], r["error_lines"], r["mce_new"], r["health"], r["cap_valid"]), ("cpu", 30, "time", 0, [], 0, "clean", None))
+        self.assertRegex(r["started"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertRegex(r["ended"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+        self.assertGreaterEqual(r["elapsed_s"], 0.2)
+        self.assertEqual(list(r["achieved"]), ["P0", "EC1"], "in unit order, only the units that ran")
+        self.assertEqual(r["achieved"]["P0"]["ratio_mode"], 57)
+        self.assertEqual(r["achieved"]["EC1"]["ratio_mode"], 48, "E max turbo 48x (0x650), the G-114 model")
+        self.assertAlmostEqual(r["achieved"]["P0"]["mhz_mean"], 5701.0, delta=0.5)
+        self.assertEqual(r["max_temp_c"], 75.5)
+        self.assertGreater(r["max_pkg_w"], 180)
+        # the stored record
+        path = Path(r["record_path"])
+        self.assertEqual(path.name, r["id"] + ".json")
+        record = json.loads(path.read_text())
+        self.assertEqual({k: record[k] for k in r if k != "record_path"}, {k: v for k, v in r.items() if k != "record_path"})
+        self.assertEqual((record["method"], record["units"], record["returncode"]), ("integer", ["P0", "EC1"], 0))
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        # nothing says pass
+        self.assertNotIn("pass", json.dumps(r).lower())
+
+    def test_the_child_is_started_as_the_user_in_its_own_group_with_a_fixed_environment(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok")
+        link = self.tmp / "link-to-stress-ng"
+        link.symlink_to(tool)
+        seen: list[str] = []
+        h = self.start_stress(self.swiring(stress_ng=str(link), invoker_fn=lambda: Invoker(1234, 5678, "operator"), trust_check=seen.append))
+        self.assertTrue(self.run_stress(h, {"units": ["P0", "P1", "EC0"], "method": "vector-math"})["ok"])
+        cmd, kw = self.popen.calls[0]
+        self.assertEqual(cmd[0], os.path.realpath(tool), "argv[0] is the resolved executable")
+        self.assertEqual(seen, [os.path.realpath(tool)] * 2, "the resolved path is trust-checked before the spawn (twice: early refusal, then right before)")
+        self.assertEqual(cmd[1:11], ["--cpu", "6", "--taskset", "0-1,8-11", "--cpu-method", "matrixprod", "--verify", "--metrics-brief", "--timeout", "30s"])
+        self.assertEqual(cmd[11:], ["--temp-path", self.workdirs.made[0]], "the private directory is the child's temp path")
+        self.assertEqual((kw["user"], kw["group"], kw["extra_groups"]), (1234, 5678, []), "setgroups([]) / setgid / setuid in the child, before exec")
+        self.assertIs(kw["start_new_session"], True)
+        self.assertEqual((kw["cwd"], kw["env"], kw["shell"], kw["close_fds"]), (self.workdirs.made[0], CHILD_ENV, False, True))
+        self.assertEqual(self.workdirs.removed, self.workdirs.made, "the directory is removed after the run")
+        self.assertFalse(Path(self.workdirs.made[0]).exists())
+        self.assertIsNot(kw["env"], CHILD_ENV)
+        self.assertEqual(kw["stdin"], -3)  # subprocess.DEVNULL
+
+    def test_state_and_progress_events(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", delay=0.4)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.assertTrue(self.run_stress(h)["ok"])
+        states = [m["state"] for m in h.events("state")]
+        self.assertIn("stressing", states)
+        self.assertEqual(states[-1], "idle")
+        progress = [m for m in h.events("progress") if "elapsed_s" in m]
+        self.assertGreaterEqual(len(progress), 3, "an event every progress interval")
+        self.assertEqual(set(progress[0]), {"event", "op_id", "elapsed_s", "of_s", "errors"})
+        self.assertEqual((progress[0]["op_id"], progress[0]["of_s"], progress[0]["errors"]), ("s", 30, 0))
+        self.assertEqual([m["elapsed_s"] for m in progress], sorted(m["elapsed_s"] for m in progress))
+
+    def test_a_verification_failure(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-verify-fail", 2, delay=0.2)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        r = self.run_stress(h, {"method": "vector-math"})["result"]
+        self.assertEqual((r["stopped_by"], r["errors"], r["health"]), ("error", 1, "clean"))
+        self.assertIn("matrixprod: data check failure", r["error_lines"][0])
+        self.assertEqual(self.list_rows(h)[0]["errors"], 1)
+
+    def test_a_tool_that_crashes_without_a_verdict(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", 127)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        r = self.run_stress(h)["result"]
+        self.assertEqual((r["stopped_by"], r["errors"]), ("error", 0))
+        self.assertTrue(any("ended abnormally (exit code 127)" in line for line in r["error_lines"]), r["error_lines"])
+
+    def test_a_tool_that_aborts_shows_its_last_output_lines(self) -> None:
+        reason = "aborting: temp-path '.' must be readable and writeable"
+        tool = self.fake("stress-ng", "stress-ng-abort", 1)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        r = self.run_stress(h)["result"]
+        self.assertEqual((r["stopped_by"], r["errors"]), ("error", 0))
+        lines = r["error_lines"]
+        self.assertIn("ended abnormally (exit code 1)", lines[0])
+        self.assertIn(reason, lines)
+        self.assertLessEqual(len(lines) - 1, 5, "at most five output lines after the helper line")
+        self.assertTrue(all(len(line) <= 200 for line in lines))
+
+    def test_only_the_last_five_non_empty_lines_are_kept_and_trimmed(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-noisy", 3)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        lines = self.run_stress(h)["result"]["error_lines"]
+        self.assertEqual(lines[1:], ["line 3", "line 4", "line 5", "line 6", ("line 7 " + "x" * 400)[:200]])
+
+    def test_a_clean_run_has_no_output_tail(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok")
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.assertEqual(self.run_stress(h)["result"]["error_lines"], [])
+
+    def test_no_private_directory_is_a_refusal_and_nothing_starts(self) -> None:
+        def nowhere(invoker: Invoker) -> Any:
+            raise OSError(28, "No space left on device")
+
+        h = self.start_stress(self.swiring(workdir_fn=nowhere))
+        reply = self.run_stress(h)
+        self.assertEqual(error_code(reply), "REFUSED")
+        self.assertEqual(reply["error"]["detail"]["check"], "WORKDIR")
+        self.assertEqual(self.popen.calls, [])
+
+    def test_the_directory_is_removed_after_a_failed_spawn_too(self) -> None:
+        def boom(cmd: list[str], **kw: Any) -> Any:
+            raise OSError(2, "No such file")
+
+        h = self.start_stress(self.swiring(popen=boom))
+        self.assertEqual(error_code(self.run_stress(h)), "REFUSED")
+        self.assertEqual((len(self.workdirs.made), self.workdirs.removed), (1, self.workdirs.made))
+
+    def test_a_memory_run(self) -> None:
+        h = self.start_stress()
+        r = self.run_stress(h, {"kind": "memory", "duration_s": 60})["result"]
+        self.assertEqual((r["kind"], r["stopped_by"], r["errors"], r["health"]), ("memory", "time", 0, "clean"))
+        cmd, _ = self.popen.calls[0]
+        self.assertEqual(cmd[1:], ["-s", "60", "-M", str((16384 - 2048) * 3 // 4), "-W"], "default: three quarters of MemAvailable - 2048 MiB")
+        self.assertEqual(len(r["achieved"]), 12)
+
+    def test_a_memory_miscompare(self) -> None:
+        tool = self.fake("stressapptest", "stressapptest-miscompare", 1)
+        h = self.start_stress(self.swiring(stressapptest=tool))
+        r = self.run_stress(h, {"kind": "memory", "memory_mb": 2048})["result"]
+        self.assertEqual((r["stopped_by"], r["errors"]), ("error", 2))
+        self.assertTrue(any("miscompare on CPU 3" in line for line in r["error_lines"]))
+        self.assertEqual(self.popen.calls[0][0][1:], ["-s", "30", "-M", "2048", "-W"])
+
+    def test_the_memory_size_is_checked_against_mem_available(self) -> None:
+        h = self.start_stress(self.swiring(meminfo_fn=lambda: 8192))
+        top = 8192 - 2048
+        over = self.run_stress(h, {"kind": "memory", "memory_mb": top + 1})
+        self.assertEqual(error_code(over), "BAD_REQUEST")
+        self.assertEqual(over["error"]["detail"]["check"], "MEM_RANGE")
+        self.assertTrue(self.run_stress(h, {"kind": "memory", "memory_mb": top}, rid="edge")["ok"])
+        self.assertEqual(self.popen.calls[0][0][4], str(top))
+        tight = self.start_stress(self.swiring(meminfo_fn=lambda: 2048 + 255))
+        low = self.run_stress(tight, {"kind": "memory"})
+        self.assertEqual((error_code(low), low["error"]["detail"]["check"]), ("REFUSED", "MEM_RANGE"))
+
+    def test_a_missing_or_untrusted_tool_is_not_started(self) -> None:
+        h = self.start_stress(self.swiring(stress_ng=str(self.tmp / "no-such-stress-ng")))
+        gone = self.run_stress(h)
+        self.assertEqual((error_code(gone), gone["error"]["detail"]["check"]), ("REFUSED", "TOOL_MISSING"))
+        self.assertIn("install the stress-ng package", gone["error"]["message"])
+
+        def untrusted(path: str) -> None:
+            raise TrustError(path, "owner uid 1000 is not root")
+
+        h2 = self.start_stress(self.swiring(trust_check=untrusted))
+        bad = self.run_stress(h2)
+        self.assertEqual((error_code(bad), bad["error"]["detail"]["check"]), ("REFUSED", "TRUST_PATH"))
+        self.assertEqual(self.popen.calls, [])
+
+    def test_a_spawn_failure_is_a_refusal(self) -> None:
+        def boom(cmd: list[str], **kw: Any) -> Any:
+            raise OSError(2, "No such file or directory")
+
+        h = self.start_stress(self.swiring(popen=boom))
+        reply = self.run_stress(h)
+        self.assertEqual((error_code(reply), reply["error"]["detail"]["check"]), ("REFUSED", "SPAWN"))
+        self.assertEqual(h.helper.machine.state.value, "idle")
+
+    def test_the_helper_stops_a_child_that_outlives_its_own_timeout(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", delay=30)
+        h = self.start_stress(self.swiring(stress_ng=tool, grace_s=-29.5))  # duration 30 s + (-29.5 s): the helper gives up at 0.5 s
+        r = self.run_stress(h)["result"]
+        self.assertEqual(r["stopped_by"], "error")
+        self.assertTrue(any("did not end by its own timeout" in line for line in r["error_lines"]), r["error_lines"])
+        self.assertLess(r["elapsed_s"], 10)
+        self.assertTrue(self.killpg.calls)
+
+    def test_a_run_that_ends_by_itself_signals_no_process_group(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", delay=0.1)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.assertTrue(self.run_stress(h)["ok"])
+        self.assertEqual(self.killpg.calls, [], "the leader exited by itself and was reaped: its group id may be reused, so it is never signalled")
+
+    def test_stop_with_nothing_running(self) -> None:
+        h = self.start_stress()
+        self.assertEqual(h.call("x", "stress.stop")["result"], {"cancelled": False, "state": "idle"})
+
+    def list_rows(self, h: Harness) -> list[dict[str, Any]]:
+        return h.call("list", "stress.list")["result"]["results"]
+
+
+# =============================================================================================================================================
+class HealthBracketTests(StressCase):
+    def test_new_mce_lines_and_a_health_delta(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok")
+        self.klog.lines = ["mce: [Hardware Error]: Machine check events logged", "usb 1-1: new device", "Write to unrecognized MSR 0x1a0"]
+        shots = iter([health_snapshot(), health_snapshot(modules=frozenset({"msr", "x_new_module"}))])
+        h = self.start_stress(self.swiring(stress_ng=tool, health_fn=lambda: next(shots)))
+        r = self.run_stress(h)["result"]
+        self.assertEqual((r["mce_new"], r["health"], r["errors"], r["stopped_by"]), (1, "delta", 0, "time"))
+        text = "\n".join(r["error_lines"])
+        self.assertIn("1 new MCE / hardware-error kernel line", text)
+        self.assertIn("Machine check events logged", text)
+        self.assertIn("health UNCLEAN: modules added: x_new_module", text)
+
+    def test_a_clean_bracket(self) -> None:
+        h = self.start_stress()
+        r = self.run_stress(h)["result"]
+        self.assertEqual((r["mce_new"], r["health"]), (0, "clean"))
+
+    def test_an_unreadable_kernel_log_or_snapshot_is_not_called_clean(self) -> None:
+        self.klog.fail = True
+        h = self.start_stress()
+        r = self.run_stress(h)["result"]
+        self.assertEqual(r["health"], "delta")
+        self.assertTrue(any("kernel log could not be read" in line for line in r["error_lines"]))
+        self.klog.fail = False
+
+        def broken() -> HealthSnapshot:
+            raise OSError("no /proc")
+
+        h2 = self.start_stress(self.swiring(health_fn=broken))
+        r2 = self.run_stress(h2)["result"]
+        self.assertEqual(r2["health"], "delta")
+        self.assertTrue(any("health snapshot could not be taken" in line for line in r2["error_lines"]))
+
+
+# =============================================================================================================================================
+class CancelTests(StressCase):
+    def test_cancel_kills_the_whole_process_group(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.begin(h, {**START, "duration_s": 600})
+        grandchild = self.wait_pid(tool)
+        h.wait_for(lambda m: m.get("event") == "progress" and "elapsed_s" in m)
+        self.assertTrue(alive(grandchild))
+        self.assertEqual(h.helper.machine.state.value, "stressing")
+        stop = h.call("stop", "stress.stop")
+        self.assertEqual((stop["result"]["cancelled"], stop["result"]["op_id"], stop["result"]["state"]), (True, "s", "stressing"))
+        r = h.response("s", 30)["result"]
+        self.assertEqual(r["stopped_by"], "cancel")
+        self.assertTrue(self.wait_dead(grandchild), "the grandchild in the child's process group is gone")
+        pgid, sig = self.killpg.calls[0]
+        self.assertEqual(sig, int(signal.SIGTERM))
+        self.assertNotEqual(pgid, os.getpgrp(), "the child's group, never the helper's own")
+        self.assertEqual(h.helper.machine.state.value, "idle")
+        self.assertEqual(self.list_one(h)["stopped_by"], "cancel")
+        self.assert_cpufreq_pristine()
+
+    def test_a_child_that_ignores_term_is_killed(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True, ignore_term=True)
+        h = self.start_stress(self.swiring(stress_ng=tool, term_wait_s=0.3))
+        self.begin(h, {**START, "duration_s": 600})
+        grandchild = self.wait_pid(tool)
+        time.sleep(0.2)
+        h.call("stop", "stress.stop")
+        r = h.response("s", 30)["result"]
+        self.assertEqual(r["stopped_by"], "cancel")
+        self.assertEqual([sig for _, sig in self.killpg.calls][:2], [int(signal.SIGTERM), int(signal.SIGKILL)])
+        self.assertTrue(self.wait_dead(grandchild))
+
+    def test_the_generic_cancel_op_works_too(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.begin(h, {**START, "duration_s": 600})
+        grandchild = self.wait_pid(tool)
+        self.assertTrue(h.call("c", "cancel", {"op_id": "s"})["result"]["cancelled"])
+        self.assertEqual(h.response("s", 30)["result"]["stopped_by"], "cancel")
+        self.assertTrue(self.wait_dead(grandchild))
+
+    def test_a_helper_that_is_told_to_exit_stops_the_child(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.begin(h, {**START, "duration_s": 600, "units": ["P2"], "ratio_cap": 40})
+        grandchild = self.wait_pid(tool)
+        self.assertEqual(self.read(2, CAP_ATTR), "4000000")
+        h.close_stdin()
+        h.join(30)
+        self.assertTrue(self.wait_dead(grandchild))
+        self.assert_cpufreq_pristine()
+
+    def test_nothing_else_can_start_while_a_stress_run_is_going(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.begin(h, {**START, "duration_s": 600})
+        self.wait_pid(tool)
+        for i, (op, args) in enumerate([("stress.start", START), ("vf.measure", {"mode": "quick"})]):
+            busy = h.call(f"b{i}", op, args)
+            self.assertEqual(error_code(busy), "BUSY", op)
+            self.assertEqual(busy["error"]["detail"]["state"], "stressing")
+        h.call("stop", "stress.stop")
+        h.response("s", 30)
+
+    def list_one(self, h: Harness) -> dict[str, Any]:
+        return h.call("list", "stress.list")["result"]["results"][0]
+
+
+# =============================================================================================================================================
+class CapTests(StressCase):
+    def test_the_cap_is_journaled_first_applied_and_restored(self) -> None:
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.begin(h, {**START, "duration_s": 600, "units": ["P2"], "ratio_cap": 40})
+        self.wait_pid(tool)
+        self.assertTrue(self.journal.exists(), "the measure journal is in force during the run")
+        self.assertIs(self.cpufreq.journal_existed_at_first_write, True, "journaled before the first cpufreq write")
+        self.assertEqual((self.read(2, CAP_ATTR), self.read(2, EPP_ATTR)), ("4000000", "performance"))
+        self.assertEqual((self.read(3, CAP_ATTR), self.read(3, EPP_ATTR)), (str(self.model.max_khz(3)), ORIGINAL_EPP), "only the selected unit is touched")
+        doc = json.loads(self.journal.read_text())
+        self.assertEqual({(e["cpu"], e["attr"], e["value"]) for e in doc["entries"]}, {(2, CAP_ATTR, str(self.model.max_khz(2))), (2, EPP_ATTR, ORIGINAL_EPP)})
+        h.call("stop", "stress.stop")
+        r = h.response("s", 30)["result"]
+        self.assertEqual(r["stopped_by"], "cancel")
+        self.assert_cpufreq_pristine()
+
+    def ebusy(self) -> None:
+        real = self.cpufreq.write
+
+        def write(cpu: int, attr: str, value: str) -> None:
+            if attr == EPP_ATTR and value == "performance":
+                raise OSError(errno.EBUSY, os.strerror(errno.EBUSY))
+            real(cpu, attr, value)
+
+        self.cpufreq.write = write  # type: ignore[method-assign]
+
+    def test_g132_the_performance_governor_leaves_epp_alone_and_says_so_once(self) -> None:
+        """Under the performance governor the kernel holds EPP and refuses a write (EBUSY): not written, not journaled, one note for all CPUs."""
+        for cpu in range(24):
+            self.cpufreq.write(cpu, "scaling_governor", "performance")
+        self.cpufreq.writes.clear()
+        self.ebusy()
+        h = self.start_stress()
+        r = self.run_stress(h, {"units": ["P2", "EC0"], "ratio_cap": 40})["result"]
+        self.assertEqual([x for x in r["error_lines"] if "energy_performance_preference" in x or "EPP" in x], ["helper: governor performance: EPP already at performance"])
+        self.assertEqual({a for _, a, _ in self.cpufreq.writes}, {CAP_ATTR})  # no EPP write, neither for the run nor for the restore
+        self.assertEqual(self.read(2, EPP_ATTR), ORIGINAL_EPP)
+        self.assertFalse(self.journal.exists())
+
+    def test_g132_any_other_epp_failure_is_one_aggregated_line(self) -> None:
+        self.ebusy()  # the governor is powersave, so the write is tried and fails on every CPU of the run
+        h = self.start_stress()
+        r = self.run_stress(h, {"units": ["P2", "EC0"], "ratio_cap": 40})["result"]
+        notes = [x for x in r["error_lines"] if "energy_performance_preference" in x]
+        self.assertEqual(notes, ["helper: energy_performance_preference not set on cpus 2, 8?11 (Device or resource busy); the run continues"])  # error lines are printable ASCII: the dash of the range shows as ?
+        self.assert_cpufreq_pristine()
+
+    def test_cap_valid_within_one_bin(self) -> None:
+        h = self.start_stress()
+        r = self.run_stress(h, {"units": ["P2"], "ratio_cap": 40})["result"]
+        self.assertEqual((r["cap_valid"], r["achieved"]["P2"]["ratio_mode"], r["stopped_by"]), (True, 40, "time"))
+        self.assert_cpufreq_pristine()
+        # E-cores settle one bin low for caps in 16..29 (intel_pstate quirk, T-027): still within a bin
+        r2 = self.run_stress(h, {"units": ["EC0"], "ratio_cap": 20}, rid="e")["result"]
+        self.assertEqual((r2["cap_valid"], r2["achieved"]["EC0"]["ratio_mode"]), (True, 19))
+        self.assert_cpufreq_pristine()
+
+    def test_g152_an_e_cap_uses_the_kernel_map_and_covers_the_whole_cluster(self) -> None:
+        """EC0 (cpus 8..11, cpuinfo 4.9 GHz, table maximum 48x) at 46x: 4.7 GHz on all four, journaled and restored; a P-core at 55x: 5.5 GHz."""
+        tool = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h = self.start_stress(self.swiring(stress_ng=tool))
+        self.begin(h, {**START, "duration_s": 600, "units": ["EC0", "P2"], "ratio_cap": 46})
+        self.wait_pid(tool)
+        self.assertEqual([self.read(c, CAP_ATTR) for c in (8, 9, 10, 11)], ["4700000"] * 4)
+        self.assertEqual(self.read(12, CAP_ATTR), str(self.model.max_khz(12)), "another cluster is not touched")
+        doc = json.loads(self.journal.read_text())
+        self.assertEqual({e["cpu"] for e in doc["entries"] if e["attr"] == CAP_ATTR}, {2, 8, 9, 10, 11})
+        h.call("stop", "stress.stop")
+        self.assertEqual(h.response("s", 30)["result"]["stopped_by"], "cancel")
+        self.assert_cpufreq_pristine()
+        tool2 = self.fake("stress-ng", "stress-ng-ok", hang=True)
+        h2 = self.start_stress(self.swiring(stress_ng=tool2))
+        self.begin(h2, {**START, "duration_s": 600, "units": ["P2"], "ratio_cap": 55}, rid="p")
+        self.wait_pid(tool2)
+        self.assertEqual(self.read(2, CAP_ATTR), "5500000")
+        h2.call("stop2", "stress.stop")
+        h2.response("p", 30)
+        self.assert_cpufreq_pristine()
+
+    def test_g152_cap_khz_follows_the_unit_maximum(self) -> None:
+        self.assertEqual([_cap_khz(r, 48, 4_900_000) for r in (46, 47, 48)], [4_700_000, 4_800_000, 4_900_000])
+        self.assertEqual(_cap_khz(55, 55, 5_500_000), 5_500_000)
+        self.assertEqual(_cap_khz(46, None, 4_900_000), 4_600_000, "unknown maximum: ratio x 100 MHz")
+
+    def test_g152_held_exactly_versus_one_bin_off(self) -> None:
+        h = self.start_stress(self.swiring(sample_fn=sim_sampler(self.cpufreq, self.model, lambda cpu: 46 if 8 <= cpu <= 11 else None)))  # the sim's E landing is not the 285K's map
+        r = self.run_stress(h, {"units": ["P2", "EC0"], "ratio_cap": 46})["result"]
+        a = r["achieved"]
+        self.assertEqual((a["P2"]["cap_ratio"], a["P2"]["cap_held"], a["EC0"]["cap_ratio"], a["EC0"]["cap_held"], a["EC0"]["ratio_mode"]), (46, True, 46, True, 46))
+        self.assertIs(r["cap_valid"], True)
+        low = self.start_stress(self.swiring(sample_fn=sim_sampler(self.cpufreq, self.model, lambda cpu: 45 if 8 <= cpu <= 11 else None)))
+        r2 = self.run_stress(low, {"units": ["EC0"], "ratio_cap": 46})["result"]
+        e = r2["achieved"]["EC0"]
+        self.assertEqual((e["ratio_mode"], e["cap_ratio"], e["cap_held"], r2["cap_valid"]), (45, 46, False, True), "one bin off: valid by SPEC 9.2, but not held")
+        self.assertNotIn("cap_ratio", self.run_stress(low, {"units": ["P2"]}, rid="u")["result"]["achieved"]["P2"])
+
+    def test_cap_invalid_when_the_unit_settles_more_than_a_bin_away(self) -> None:
+        low = self.start_stress(self.swiring(sample_fn=sim_sampler(self.cpufreq, self.model, lambda cpu: 36 if cpu == 2 else None)))
+        r = self.run_stress(low, {"units": ["P2", "P3"], "ratio_cap": 40})["result"]
+        self.assertIs(r["cap_valid"], False)
+        self.assertEqual({u: a["ratio_mode"] for u, a in r["achieved"].items()}, {"P2": 36, "P3": 40})
+        self.assert_cpufreq_pristine()
+        # a cap above what a non-favored P-core can reach (cpuinfo_max 55x): the unit's own maximum is the reference, so settling at 55x is valid
+        h = self.start_stress()
+        r2 = self.run_stress(h, {"units": ["P2"], "ratio_cap": 57})["result"]
+        self.assertEqual((r2["cap_valid"], r2["achieved"]["P2"]["ratio_mode"]), (True, 55))
+        # ... but settling lower than that (power / turbo limits binding first) is not
+        low2 = self.start_stress(self.swiring(sample_fn=sim_sampler(self.cpufreq, self.model, lambda cpu: 50)))
+        self.assertIs(self.run_stress(low2, {"units": ["P2"], "ratio_cap": 57})["result"]["cap_valid"], False)
+
+    def test_no_cap_means_no_cpufreq_write_and_no_journal(self) -> None:
+        h = self.start_stress()
+        r = self.run_stress(h, {"units": ["P2"]})["result"]
+        self.assertIsNone(r["cap_valid"])
+        self.assertEqual(self.cpufreq.writes, [])
+        self.assertFalse(self.journal.exists())
+
+    def test_restored_on_a_failed_spawn_and_after_a_verification_failure(self) -> None:
+        def boom(cmd: list[str], **kw: Any) -> Any:
+            raise OSError(13, "Permission denied")
+
+        h = self.start_stress(self.swiring(popen=boom))
+        self.assertEqual(error_code(self.run_stress(h, {"units": ["P2"], "ratio_cap": 40})), "REFUSED")
+        self.assert_cpufreq_pristine()
+        bad = self.fake("stress-ng", "stress-ng-verify-fail", 2)
+        h2 = self.start_stress(self.swiring(stress_ng=bad))
+        self.assertEqual(self.run_stress(h2, {"units": ["P2"], "ratio_cap": 40}, rid="v")["result"]["errors"], 1)
+        self.assert_cpufreq_pristine()
+
+    def test_a_cap_write_that_fails_refuses_and_restores(self) -> None:
+        self.cpufreq.fail = lambda cpu, attr, value: cpu == 3 and attr == CAP_ATTR and value == "4000000"
+        h = self.start_stress()
+        reply = self.run_stress(h, {"units": ["P2", "P3"], "ratio_cap": 40})
+        self.assertEqual((error_code(reply), reply["error"]["detail"]["check"]), ("REFUSED", "CAP_WRITE"))
+        self.cpufreq.fail = None
+        self.assert_cpufreq_pristine()
+        self.assertEqual(self.popen.calls, [])
+
+    def test_a_cap_run_of_the_memory_screen_covers_every_cpu(self) -> None:
+        h = self.start_stress()
+        r = self.run_stress(h, {"kind": "memory", "ratio_cap": 30})["result"]
+        self.assertTrue(r["cap_valid"])
+        self.assertEqual({c for c, a, _ in self.cpufreq.writes if a == CAP_ATTR}, set(range(24)))
+        self.assert_cpufreq_pristine()
+
+    def test_a_cap_needs_the_measurement_support(self) -> None:
+        h = self.start_stress(measure=False)
+        reply = self.run_stress(h, {"ratio_cap": 40})
+        self.assertEqual((error_code(reply), reply["error"]["detail"]["check"]), ("REFUSED", "NO_CPUFREQ"))
+        self.assertTrue(self.run_stress(h, {}, rid="ok")["ok"], "an uncapped run needs no cpufreq")
+
+    def test_a_restore_that_fails_is_loud_and_the_journal_stays_for_the_next_start(self) -> None:
+        self.cpufreq.fail = lambda cpu, attr, value: cpu == 2 and attr == CAP_ATTR and value == str(self.model.max_khz(2))  # the restore write
+        h = self.start_stress()
+        reply = self.run_stress(h, {"units": ["P2"], "ratio_cap": 40})
+        self.assertEqual(error_code(reply), "INTERNAL")
+        self.assertIn("could NOT restore", reply["error"]["message"])
+        self.assertTrue(self.journal.exists(), "the journal is kept: not everything could be restored")
+        self.assertEqual(self.read(2, CAP_ATTR), "4000000")
+        # while it cannot be applied, no new capped run starts
+        calls = len(self.popen.calls)
+        stale = self.run_stress(h, {"units": ["P2"], "ratio_cap": 40}, rid="again")
+        self.assertEqual((error_code(stale), stale["error"]["detail"]["check"]), ("REFUSED", "STALE_JOURNAL"))
+        self.assertEqual(len(self.popen.calls), calls)
+        # once it can be, the next capped run applies the stale journal first and runs normally
+        self.cpufreq.fail = None
+        ok = self.run_stress(h, {"units": ["P2"], "ratio_cap": 41}, rid="third")
+        self.assertTrue(ok["ok"], ok)
+        self.assertTrue(any("stale measure journal applied" in line for line in self.logs), self.logs)
+        self.assert_cpufreq_pristine()
+
+
+# =============================================================================================================================================
+class _Proc:
+    """A child as ``_stop_child`` sees it: ``poll`` answers from a script (``None`` = running), ``wait`` times out or reaps."""
+
+    pid = 4321
+    stdout = None
+
+    def __init__(self, polls: list[int | None], wait_times_out: bool = False) -> None:
+        self.polls, self.wait_times_out = list(polls), wait_times_out
+
+    def poll(self) -> int | None:
+        return self.polls.pop(0) if len(self.polls) > 1 else self.polls[0]
+
+    def wait(self, timeout: float | None = None) -> int:
+        if self.wait_times_out:
+            raise subprocess.TimeoutExpired("fake", timeout or 0)
+        self.polls = [-15]
+        return -15
+
+
+class ProcessGroupReuseTests(unittest.TestCase):
+    """The process group id is signalled only while the leader is alive and unreaped (a reaped leader's pgid may belong to someone else by now)."""
+
+    def wiring(self) -> tuple[StressWiring, list[tuple[int, int]]]:
+        calls: list[tuple[int, int]] = []
+        return stress_wiring(Path(tempfile.mkdtemp()), killpg=lambda pgid, sig: calls.append((pgid, int(sig))), term_wait_s=0.01), calls
+
+    def test_a_child_that_is_already_reaped_is_never_signalled(self) -> None:
+        w, calls = self.wiring()
+        _stop_child(w, _Proc([0]), None)
+        self.assertEqual(calls, [])
+
+    def test_term_then_no_kill_once_wait_returned(self) -> None:
+        w, calls = self.wiring()
+        _stop_child(w, _Proc([None]), None)
+        self.assertEqual(calls, [(4321, int(signal.SIGTERM))], "wait() reaped it: no further signal")
+
+    def test_kill_only_if_the_leader_is_still_unreaped_after_the_wait(self) -> None:
+        w, calls = self.wiring()
+        _stop_child(w, _Proc([None], wait_times_out=True), None)
+        self.assertEqual([s for _, s in calls], [int(signal.SIGTERM), int(signal.SIGKILL)])
+        # it exited on its own between the TERM and the end of the wait (poll now answers a code): the KILL must not go out
+        w2, calls2 = self.wiring()
+        _stop_child(w2, _Proc([None, 0], wait_times_out=True), None)
+        self.assertEqual([s for _, s in calls2], [int(signal.SIGTERM)])
+
+    def test_a_pipe_holder_after_the_leader_is_gone_is_reported_not_signalled(self) -> None:
+        w, calls = self.wiring()
+        release = threading.Event()
+        reader = threading.Thread(target=release.wait, daemon=True)
+        reader.start()
+        notes = _stop_child(w, _Proc([0]), reader)
+        release.set()
+        self.assertEqual(calls, [])
+        self.assertTrue(any("not signalled" in n for n in notes))
+
+
+# =============================================================================================================================================
+class ListTests(StressCase):
+    def test_list_is_newest_first_summary_rows(self) -> None:
+        h = self.start_stress()
+        ids = []
+        for i in range(3):
+            ids.append(self.run_stress(h, {"duration_s": 30 + i}, rid=f"r{i}")["result"]["id"])
+            time.sleep(1.01)  # ids start with the second
+        rows = h.call("l", "stress.list")["result"]["results"]
+        self.assertEqual([r["id"] for r in rows], ids[::-1])
+        self.assertEqual(set(rows[0]), {"id", "kind", "started", "ended", "duration_s", "elapsed_s", "stopped_by", "errors", "cap_valid", "health", "mce_new",
+                                         "max_temp_c", "max_pkg_w", "method", "units", "ratio_cap", "memory_mb", "state_fingerprint"})
+        self.assertEqual([r["duration_s"] for r in rows], [32, 31, 30])
+
+    def test_an_empty_store(self) -> None:
+        self.assertEqual(self.start_stress().call("l", "stress.list")["result"], {"results": [], "state_fingerprint": None})
+
+
+# =============================================================================================================================================
+class StateFingerprintTests(StressCase):
+    """G-244 (QA-23): a stress record stores the fingerprint of the tuning state it ran on (the words the accepted state checks); stress.list says which state the CPU holds now."""
+
+    WORDS = {0: [0x11, 0x22, 0x33], 1: [0x11, 0x22, 0x34]}
+
+    def test_a_run_records_the_state_it_tested_and_the_list_carries_it(self) -> None:
+        from linux_xtu.profiles.expected import state_digest
+
+        h = self.start_stress()
+        h.helper.last_words = {c: list(w) for c, w in self.WORDS.items()}
+        h.helper._last_restored = True
+        reply = self.run_stress(h)
+        self.assertTrue(reply["ok"], reply)
+        want = state_digest(self.WORDS)
+        self.assertRegex(want, r"^[0-9a-f]{16}$")
+        self.assertEqual(reply["result"]["state_fingerprint"], want)
+        self.assertEqual(json.loads(Path(reply["result"]["record_path"]).read_text())["state_fingerprint"], want)
+        listed = h.call("l", "stress.list")["result"]
+        self.assertEqual(listed["state_fingerprint"], want, "the state the CPU holds now")
+        self.assertEqual(listed["results"][0]["state_fingerprint"], want)
+
+    def test_evidence_matches_only_the_same_state(self) -> None:
+        h = self.start_stress()
+        h.helper._last_restored = True
+        h.helper.last_words = {c: list(w) for c, w in self.WORDS.items()}
+        before = self.run_stress(h)["result"]["state_fingerprint"]
+        h.helper.last_words = {0: [0x11, 0x22, 0x33], 1: [0x11, 0x22, 0x35]}  # one point changed since (an apply's read-back)
+        listed = h.call("l", "stress.list")["result"]
+        self.assertNotEqual(listed["state_fingerprint"], before)
+        self.assertEqual(listed["results"][0]["state_fingerprint"], before, "the old run keeps the state it ran on")
+
+    def test_the_ring_and_the_turbo_tables_are_part_of_the_state(self) -> None:
+        from linux_xtu.profiles.expected import state_digest
+
+        base = state_digest(self.WORDS)
+        self.assertNotEqual(base, state_digest(self.WORDS, [1, 2, 3]))
+        self.assertNotEqual(base, state_digest(self.WORDS, None, {"p": [57] * 8}))
+        self.assertNotEqual(state_digest(self.WORDS, None, {"p": [57] * 8}), state_digest(self.WORDS, None, {"p": [56] + [57] * 7}))
+        self.assertEqual(base, state_digest({1: list(self.WORDS[1]), 0: list(self.WORDS[0])}), "the order of the cpus does not matter")
+        self.assertIsNone(state_digest({}))
+        self.assertIsNone(state_digest(None))
+
+    def test_without_a_read_the_state_is_null_not_a_made_up_id(self) -> None:
+        h = self.start_stress()
+        h.helper._last_restored = True
+        h.helper.last_words = None
+        reply = self.run_stress(h)
+        self.assertTrue(reply["ok"], reply)
+        self.assertIn("state_fingerprint", reply["result"])
+        self.assertIsNone(reply["result"]["state_fingerprint"])
+        self.assertIsNone(h.call("l", "stress.list")["result"]["state_fingerprint"])
+
+    def test_an_old_record_without_the_key_lists_without_it(self) -> None:
+        from linux_xtu.stress.store import summary_row
+
+        old = {"id": "20261001T000000Z-aaaa", "kind": "cpu", "health": "clean"}
+        self.assertNotIn("state_fingerprint", summary_row(old))
+        self.assertIn("state_fingerprint", summary_row({**old, "state_fingerprint": None}))
+
+
+# =============================================================================================================================================
+class StressValidatorTests(unittest.TestCase):
+    """The helper's own argument validators for the stress ops (the web server's copy of this table went with D-053)."""
+
+    def test_the_op_validators_mirror_the_contract(self) -> None:
+        from linux_xtu.helper.ops import builtin_ops
+        from linux_xtu.helper.protocol import OpError
+
+        ops = builtin_ops()
+
+        def check(op: str, args: dict) -> bool:
+            try:
+                ops[op].validate(args)
+            except OpError:
+                return False
+            return True
+
+        self.assertTrue(ops["stress.start"].long)
+        for good in (
+            {"kind": "cpu", "duration_s": 30}, {"kind": "memory", "duration_s": 3600, "memory_mb": 1024, "ratio_cap": None},
+            {"kind": "cpu", "duration_s": 60, "method": "cache", "units": ["P0", "EC3"], "ratio_cap": 53},
+        ):
+            self.assertTrue(check("stress.start", good), good)
+        for bad in (
+            {}, {"kind": "cpu"}, {"kind": "disk", "duration_s": 60}, {"kind": "cpu", "duration_s": 29}, {"kind": "cpu", "duration_s": True},
+            {"kind": "cpu", "duration_s": 60, "method": "sse"}, {"kind": "cpu", "duration_s": 60, "units": ["Q1"]}, {"kind": "cpu", "duration_s": 60, "units": []},
+            {"kind": "cpu", "duration_s": 60, "ratio_cap": 61}, {"kind": "cpu", "duration_s": 60, "ratio_cap": "40"}, {"kind": "cpu", "duration_s": 60, "x": 1},
+            {"kind": "memory", "duration_s": 60, "memory_mb": 10}, {"kind": "memory", "duration_s": 60, "memory_mb": 1.5},
+        ):
+            self.assertFalse(check("stress.start", bad), bad)
+        for op in ("stress.stop", "stress.list"):
+            self.assertFalse(ops[op].long)
+            self.assertTrue(check(op, {}))
+            self.assertFalse(check(op, {"x": 1}))
+
+
+# =============================================================================================================================================
+class SimTests(MeasureCase):
+    """``--sim``: no stress_wiring is attached, so the helper builds the simulator one from its measure wiring (the in-memory cpufreq and the SimModel)."""
+
+    def start_sim(self) -> Harness:
+        from linux_xtu.helper.ops_measure import sim_wiring
+
+        h = Harness(self.config())
+        h.helper.measure_wiring = sim_wiring(self.tmp / "state")
+        self.harnesses.append(h)
+        h.start()
+        return h
+
+    def test_a_simulated_capped_run_end_to_end(self) -> None:
+        h = self.start_sim()
+        reply = h.call("s", "stress.start", {"kind": "cpu", "duration_s": 30, "units": ["P0", "EC0"], "ratio_cap": 40}, timeout=60)
+        self.assertTrue(reply["ok"], reply)
+        r = reply["result"]
+        self.assertEqual((r["stopped_by"], r["errors"], r["health"], r["cap_valid"], r["mce_new"]), ("time", 0, "clean", True, 0))
+        self.assertEqual(r["achieved"]["P0"]["ratio_mode"], 40)
+        self.assertLess(r["elapsed_s"], 40)
+        self.assertTrue(str(r["record_path"]).startswith(str(self.tmp / "state" / "stress")))
+        cpufreq = h.helper.measure_wiring.cpufreq
+        self.assertEqual((cpufreq.read(0, CAP_ATTR), cpufreq.read(0, EPP_ATTR)), ("5700000", "balance_power"), "the simulated cpufreq is back as it was")
+        self.assertFalse(h.helper.measure_wiring.journal_path.exists())
+        self.assertEqual(h.call("l", "stress.list")["result"]["results"][0]["id"], r["id"])
+
+    def test_a_simulated_memory_run_can_be_cancelled(self) -> None:
+        h = self.start_sim()
+        h.send({"id": "m", "op": "stress.start", "args": {"kind": "memory", "duration_s": 600}})
+        h.wait_for(lambda m: m.get("event") == "progress" and "elapsed_s" in m)
+        self.assertTrue(h.call("stop", "stress.stop")["result"]["cancelled"])
+        r = h.response("m", 30)["result"]
+        self.assertEqual((r["kind"], r["stopped_by"]), ("memory", "cancel"))
+
+
+if __name__ == "__main__":
+    unittest.main()

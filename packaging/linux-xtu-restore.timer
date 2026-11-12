@@ -1,0 +1,15 @@
+# linux-xtu: packaged unit (install.sh replaces it on upgrade; a file without this line is not ours and is never overwritten without --replace-boot-restore)
+# linux-xtu-restore.timer - starts linux-xtu-restore.service once per boot. DISABLED by default: install.sh --enable-boot-restore enables it (and arms the
+# boot restore); "systemctl disable linux-xtu-restore.timer" (as root) turns it off again. Never "enable --now" it on a running system: a boot timer whose time has
+# passed fires at once. The apply itself waits until apply_delay_s of uptime (/etc/linux-xtu/restore.toml, default 60 s); 30 s is the earliest.
+[Unit]
+Description=Linux XTU boot restore of the accepted state (timer)
+Documentation=https://github.com/xyehya/linux-xtu
+
+[Timer]
+OnBootSec=30s
+AccuracySec=1s
+Unit=linux-xtu-restore.service
+
+[Install]
+WantedBy=timers.target

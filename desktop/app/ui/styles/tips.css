@@ -1,0 +1,308 @@
+/* Tips screen (desktop/DESIGN.md §8): a reading page for non-experts. Content: lib/tips.js. One panel: a numbered path on the left, one
+   reading column (68ch) on the right. Prose is the only place with 14/22 type; everything else uses the instrument scale. */
+
+.lx-tips {
+  display: grid;
+  -webkit-user-select: text; /* data, copyable (base.css: the page is not selectable by default) */
+  user-select: text;
+  grid-template-columns: 14.5rem minmax(0, 1fr);
+  min-height: 100%;
+  background: var(--n1);
+}
+
+/* ---- path (table of contents) ---- */
+.lx-tips-nav {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  max-height: 100%;
+  overflow: auto;
+  padding: var(--s4) 0 var(--s4);
+}
+
+.lx-tips-nav-t {
+  display: block;
+  padding: 0 var(--s4) var(--s2);
+  color: var(--fg3);
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+
+.lx-tips-nav ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lx-tips-nav a {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1.5rem minmax(0, 1fr);
+  align-items: baseline;
+  gap: 0.25rem;
+  padding: 0.3125rem var(--s4);
+  color: var(--fg2);
+  line-height: var(--lh-md);
+}
+
+.lx-tips-nav a:hover {
+  color: var(--fg);
+  background: var(--n2);
+}
+
+.lx-tips-nav a[aria-current="true"] {
+  color: var(--fg);
+  background: var(--n2);
+}
+
+.lx-tips-nav a[aria-current="true"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--fg);
+}
+
+.lx-tips-nav .lx-tn-n {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg3);
+}
+
+/* ---- reading column ---- */
+.lx-tips-main {
+  min-width: 0;
+  padding: var(--s6) var(--s8) var(--s10);
+  border-left: var(--bw) solid var(--rule); /* the path's rule runs the full height */
+}
+
+/* sections may hold figures up to 720 px; prose inside them stays at the reading measure */
+.lx-tips-main > * {
+  max-width: 47.5rem;
+}
+
+.lx-tips-lead,
+.lx-tip-body > :not(.lx-fig) {
+  max-width: var(--measure);
+}
+
+.lx-tips-h1 {
+  margin: 0 0 var(--s2);
+  font-size: var(--t-2xl);
+  line-height: var(--lh-2xl);
+  font-weight: var(--w-semi);
+  color: var(--fg);
+}
+
+.lx-tips-lead {
+  margin: 0 0 var(--s6);
+  color: var(--fg-read);
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+}
+
+.lx-tip {
+  padding: var(--s6) 0 var(--s2);
+  border-top: var(--bw) solid var(--rule);
+}
+
+.lx-tip-head {
+  display: grid;
+  grid-template-columns: 2.5rem minmax(0, 1fr) auto;
+  align-items: baseline;
+  column-gap: 0;
+  margin-bottom: var(--s3);
+}
+
+.lx-tip-n {
+  font-family: var(--mono);
+  font-size: var(--t-lg);
+  color: var(--fg3);
+}
+
+.lx-tip-head h2 {
+  font-size: var(--t-xl);
+  line-height: var(--lh-xl);
+  font-weight: var(--w-semi);
+  color: var(--fg);
+}
+
+.lx-tip-meta {
+  grid-column: 2;
+  margin-top: 2px;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-tip-goto {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+}
+
+.lx-tip-body {
+  padding-left: 2.5rem;
+}
+
+.lx-tip-body p,
+.lx-tip-body li,
+.lx-tip-body dd {
+  color: var(--fg-read);
+  font-size: var(--t-read);
+  line-height: var(--lh-read);
+}
+
+.lx-tip-body p {
+  margin: 0 0 var(--s3);
+}
+
+.lx-tip-body strong {
+  color: var(--fg);
+  font-weight: var(--w-semi);
+}
+
+.lx-tip-body code {
+  padding: 0 0.1875rem;
+  background: var(--n2);
+  color: var(--fg);
+  font-size: var(--t-md);
+}
+
+/* value words in prose carry their meaning colour: "your edit", "measured", "factory" */
+.lx-tip-body [data-v="set"] { color: var(--set); }
+.lx-tip-body [data-v="base"] { color: var(--fg3); }
+.lx-tip-body .lx-w { color: var(--write); }
+
+/* numbered steps */
+.lx-steps {
+  margin: 0 0 var(--s4);
+  padding: 0;
+  list-style: none;
+  counter-reset: lx-step;
+}
+
+.lx-steps > li {
+  position: relative;
+  margin: 0 0 var(--s2);
+  padding-left: 2.25rem;
+  counter-increment: lx-step;
+}
+
+.lx-steps > li::before {
+  content: counter(lx-step);
+  position: absolute;
+  left: 0;
+  top: 1px;
+  width: 1.375rem;
+  height: 1.25rem;
+  border: var(--bw) solid var(--rule-strong);
+  color: var(--fg2);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  line-height: 1.125rem;
+  text-align: center;
+}
+
+.lx-bullets {
+  margin: 0 0 var(--s4);
+  padding-left: 1.125rem;
+}
+
+.lx-bullets > li {
+  margin-bottom: 0.25rem;
+}
+
+.lx-bullets > li::marker {
+  color: var(--fg3);
+}
+
+/* figure: a diagram drawn with the plot grammar */
+.lx-fig {
+  width: calc(37.5rem + 2 * var(--s3) + 2px); /* diagrams are drawn at 600 px: 11 px labels stay 11 px */
+  max-width: 100%;
+  margin: var(--s4) 0 var(--s5);
+  padding: var(--s3) var(--s3) var(--s2);
+  border: var(--bw) solid var(--rule);
+  background: var(--n0);
+}
+
+.lx-fig.lx-plot svg {
+  width: 37.5rem;
+  max-width: 100%;
+}
+
+.lx-fig figcaption {
+  margin-top: var(--s2);
+  color: var(--fg3);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+/* annunciator legend inside a tip */
+.lx-tip-anns {
+  display: grid;
+  grid-template-columns: 6rem minmax(0, 1fr);
+  gap: 0.5rem var(--s3);
+  align-items: baseline;
+  margin: 0 0 var(--s4);
+}
+
+.lx-tip-anns dt {
+  margin: 0;
+}
+
+.lx-tip-anns dd {
+  margin: 0;
+}
+
+/* glossary */
+.lx-gloss {
+  display: grid;
+  grid-template-columns: 11rem minmax(0, 1fr);
+  gap: 0.625rem var(--s4);
+  margin: 0;
+}
+
+.lx-gloss dt {
+  color: var(--fg);
+  font-weight: var(--w-med);
+  line-height: var(--lh-read);
+}
+
+.lx-gloss dt .lx-term {
+  display: block;
+  margin: 0;
+  line-height: var(--lh-sm);
+}
+
+.lx-gloss dd {
+  margin: 0;
+}
+
+.lx-tips-foot {
+  margin-top: var(--s8);
+  padding-top: var(--s3);
+  border-top: var(--bw) solid var(--rule);
+  color: var(--fg3);
+  font-size: var(--t-sm);
+  line-height: var(--lh-sm);
+}
+
+@media (max-width: 1100px) {
+  .lx-tips {
+    grid-template-columns: 12.25rem minmax(0, 1fr);
+  }
+
+  .lx-tips-main {
+    padding: var(--s5) var(--s5) var(--s8);
+  }
+
+  .lx-gloss {
+    grid-template-columns: 10rem minmax(0, 1fr);
+  }
+}

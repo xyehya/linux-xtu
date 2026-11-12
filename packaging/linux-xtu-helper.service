@@ -1,0 +1,46 @@
+# linux-xtu root helper (D-043): MSR / cpufreq / /dev/mem access for the GUI, one allowlisted client at a time on /run/linux-xtu/helper.sock.
+# Started by linux-xtu-helper.socket (never enabled by itself: there is no [Install] section). Runs as root with its normal capabilities: the helper
+# writes MSRs (/dev/cpu/*/msr), cpufreq / powercap / CPU-online / uncore sysfs, files under /var/lib/linux-xtu, /run/linux-xtu and /etc/linux-xtu (the accepted
+# state), reads /dev/mem (mem.read), and drops privileges for stress children (stress-ng as the client's user, workdir in /tmp or /run/user/<uid>).
+# Hardening (assessment 06 F13; each line checked against that work [UNVERIFIED on hardware until the next helper-restart sitting]):
+#   NoNewPrivileges / RestrictSUIDSGID / LockPersonality : no privilege gain through exec, no setuid files, no personality changes
+#   ProtectSystem=strict + ReadWritePaths                : the file system read-only except the helper's three directories; /dev, /proc and /sys untouched
+#   ProtectHome=yes                                      : /home, /root and /run/user inaccessible; the stress workdir then comes from mkdtemp in /tmp
+#                                                          (prepare_workdir checks /run/user/<uid> by lstat: "read-only" would hand the child an unwritable dir)
+#   PrivateTmp=yes                                       : that /tmp is private to the helper and its stress children
+#   ProtectKernelModules / ProtectHostname / RestrictNamespaces / RestrictRealtime / SystemCallArchitectures=native / UMask=0077
+#                                                        : no module loads (msr is loaded by the system: modules-load.d), no namespaces, no realtime
+#                                                          scheduling (stress-ng runs CPU stressors only); every file the helper creates has its own mode
+# NOT set on purpose: PrivateDevices (hides /dev/cpu/*/msr and /dev/mem), ProtectClock (implies DeviceAllow=char-rtc, which closes every other device
+# node, the MSR devices included), ProtectKernelTunables (/sys read-only: cpufreq, powercap, online, uncore), ProtectKernelLogs (stress health reads
+# /dev/kmsg), PrivateNetwork (it also remounts /sys and cuts AF_NETLINK / abstract AF_UNIX), CapabilityBoundingSet (CAP_SYS_RAWIO, CAP_SETUID/SETGID,
+# CAP_CHOWN, CAP_KILL and friends are needed; a missing one would surface as a broken feature, not a refusal).
+[Unit]
+Description=Linux XTU root helper
+Documentation=https://github.com/xyehya/linux-xtu
+Requires=linux-xtu-helper.socket
+After=linux-xtu-helper.socket
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 -I /usr/lib/linux-xtu/linux-xtu-helper --device --socket
+KillSignal=SIGTERM
+# A measurement or stress run in flight restores cpufreq before the helper exits; give it time before systemd kills it (the helper waits at most 300 s for a
+# session, linux_xtu.helper.service._SESSION_JOIN_S; keep this value >= that one).
+TimeoutStopSec=300
+NoNewPrivileges=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ProtectSystem=strict
+ReadWritePaths=/etc/linux-xtu /var/lib/linux-xtu /run/linux-xtu
+# D-054 (transition): the guard also holds the installed lock file of the earlier name (/run/arltuner/mailbox.lock, a root-only directory) so code of that
+# name cannot interleave with this helper; "-": ignored where the directory does not exist.
+ReadWritePaths=-/run/arltuner
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelModules=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+SystemCallArchitectures=native
+UMask=0077

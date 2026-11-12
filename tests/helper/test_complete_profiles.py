@@ -1,0 +1,273 @@
+"""G-148 (D-044): complete, independent profiles; the accepted state is one profile, restored in one shot.
+
+Simulator flows through the real helper process loop and the REAL guard (no hardware): a cold boot restored in one apply (also with a small step limit, which
+the apply splits into rounds), a warm boot with a residual OC point (EQUIVALENT), saving a complete profile, accepting a partial (legacy) profile that was applied
+(the complete state is recorded), and the refusal of a complete profile made on another CPU. The accepted state is the reference machine's, converted to one
+complete profile (``examples/reference-285k/profiles``: ``CURRENT`` + ``accepted-2026-10-04.toml`` + ``EXPECTED-words.txt``).
+"""
+from __future__ import annotations
+
+import dataclasses
+import shutil
+from pathlib import Path
+from typing import Any
+
+from linux_xtu.controls import pack_turbo
+from linux_xtu.guard.policy import fused_top_ratio
+from linux_xtu.helper.ops import _parse_expected
+from linux_xtu.mailbox import VfWord
+from linux_xtu.msr import SimConfig, SimMsrPort
+from linux_xtu.profiles import load_profile
+from linux_xtu.profiles.store import ProfileStore
+from linux_xtu.topology import arl_s_285k
+
+from ._support import error_code
+from .test_tune import REPO, TuneCase, row, rows, texts
+
+EXAMPLE = REPO / "examples/reference-285k/profiles"
+EXPECTED = _parse_expected((EXAMPLE / "EXPECTED-words.txt").read_text())
+TOPO = arl_s_285k()
+COLD = SimConfig.measured(per_point=True, reject_zero_fields=True, sticky_oc_ratio=True)
+EC1, EC1_WORD = (12, 13, 14, 15), VfWord(48, 0x48C, False, 0).to_u32()  # [MEASURED lnx 2026-10-13] a residual OC point after a warm reboot (G-147)
+
+
+def unit_words(sim: SimMsrPort, cpu: int, n: int) -> list[int]:
+    return [sim.vf(cpu, 0, p).to_u32() for p in range(n)]
+
+
+class CompleteCase(TuneCase):
+    def accepted(self) -> Path:
+        """The reference machine's accepted state as the app now writes it: CURRENT with one line, the complete profile, EXPECTED-words.txt."""
+        acc = self.tmp / "accepted"
+        (acc / "profiles").mkdir(parents=True)
+        shutil.copy(EXAMPLE / "CURRENT", acc / "CURRENT")
+        shutil.copy(EXAMPLE / "EXPECTED-words.txt", acc / "EXPECTED-words.txt")
+        shutil.copy(EXAMPLE / "accepted-2026-10-04.toml", acc / "profiles" / "accepted-2026-10-04.toml")
+        return acc
+
+    def restore(self, h: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+        plan = self.plan(h, {"restore": "accepted"})
+        return plan, self.apply_ok(h, plan)
+
+    def assert_expected_words(self) -> None:
+        """Every core (each CPU of an E cluster too) holds EXPECTED-words.txt exactly, OC word and every point."""
+        for cpu, want in EXPECTED.items():
+            unit = TOPO.unit_of_cpu(cpu)
+            for c in TOPO.unit_cpus(unit):
+                self.assertEqual([f"{w:X}" for w in unit_words(self.sim, c, len(want))], [f"{w:X}" for w in want], f"cpu {c}")
+
+
+class ColdBoot(CompleteCase):
+    def test_one_apply_restores_the_accepted_words_exactly_and_writes_only_differences(self) -> None:
+        h = self.boot(COLD, accepted_dir=self.accepted())
+        self.read(h)
+        plan, result = self.restore(h)
+        self.assertTrue(plan["complete"])
+        self.assertEqual(plan["rounds"], 1)  # the shipped policy's 200 mV step covers the deepest offset (-91 mV)
+        self.assertEqual(plan["ops_needed"], 651)  # worst case reserved: 24 scan reads + 257 reads + 185 writes and their read-backs (the reference layout)
+        self.assert_expected_words()
+        written = [r for r in self.sim.requests if r.cmd == 0x11]
+        self.assertFalse([r for r in written if r.p2 == 0], "an OC word the CPU already holds (cold 0 / 0x39) is never rewritten")
+        changed = {(c, p) for cpu, want in EXPECTED.items() for c in TOPO.unit_cpus(TOPO.unit_of_cpu(cpu)) for p, w in enumerate(want[1:], 1) if VfWord.from_u32(w).offset_raw}
+        self.assertEqual({(r.cpu, r.p2) for r in written}, changed)  # exactly the points whose offset differs from the cold 0
+        self.assertNotIn(0x1D, [r.cmd for r in self.sim.requests])
+        again = self.read(h)
+        self.assertTrue(all(c["match"] and not c.get("equivalent") for c in again["accepted_match"]), again["accepted_match"])
+
+    def test_a_second_restore_writes_nothing(self) -> None:
+        h = self.boot(COLD, accepted_dir=self.accepted())
+        self.read(h)
+        self.restore(h)
+        self.read(h)
+        before = len(self.sim.requests)
+        plan, result = self.restore(h)
+        self.assertEqual(plan["steps"], [])  # the preview lists no write: the last read already holds every word
+        self.assertEqual(plan["reads"], 1 + 4 * 24 + 160)  # ... but the apply still reads every word (0x14, 4 per CPU, every point)
+        self.assertEqual(result["writes_sent"], 0)
+        self.assertFalse([r for r in self.sim.requests[before:] if r.cmd in (0x11, 0x15, 0x1D, 0x27)])
+
+    def test_a_restore_is_one_round_whatever_the_distance(self) -> None:
+        """D-049: no step limit -- the deepest point (55x -91 mV from the cold 0) is written once, directly, in the one round; no 'guarded rounds' warning."""
+        h = self.boot(COLD, accepted_dir=self.accepted())
+        self.read(h)
+        plan, result = self.restore(h)
+        self.assertEqual(plan["rounds"], 1)
+        self.assertFalse(any("guarded rounds" in w for w in texts(plan)), texts(plan))
+        self.assertTrue(result["complete"])
+        self.assert_expected_words()
+        p7 = TOPO.resolve("P", 7).cpu
+        self.assertEqual(len([r for r in self.sim.requests if r.cmd == 0x11 and (r.cpu, r.p2) == (p7, 6)]), 1)
+
+    def test_without_a_read_the_apply_is_one_round_too(self) -> None:
+        h = self.boot(COLD, accepted_dir=self.accepted())
+        plan = self.plan(h, {"restore": "accepted"})  # no read: one round
+        self.assertEqual(plan["rounds"], 1)
+        self.apply_ok(h, plan)
+        self.assert_expected_words()
+
+
+class WarmBoot(CompleteCase):
+    def test_a_residual_oc_point_is_neutralised_and_equivalent(self) -> None:
+        initial = dict(COLD.initial_vf)
+        initial.update({c: VfWord.from_u32(EC1_WORD) for c in EC1})
+        h = self.boot(dataclasses.replace(COLD, initial_vf=initial), accepted_dir=self.accepted())
+        self.read(h)
+        _, result = self.restore(h)
+        self.assertTrue(result["residual"], result)
+        w = self.sim.vf(12)
+        self.assertEqual(w.ratio, 48)  # never a zero ratio: the OC ratio cannot be removed at runtime
+        self.assertLessEqual(w.v_target_raw, (self.sim.fused_word(12) >> 8 & 0xFFF) + VfWord.from_u32(EXPECTED[12][6]).offset_raw)
+        after = self.read(h)
+        ec1 = next(c for c in after["accepted_match"] if c["cpu"] == 12)
+        self.assertTrue(ec1["match"] and ec1["equivalent"], ec1)
+        self.assertTrue(all(c["match"] for c in after["accepted_match"]), after["accepted_match"])
+
+    def test_a_residual_oc_point_and_a_far_restore_in_one_apply(self) -> None:
+        initial = dict(COLD.initial_vf)
+        initial.update({c: VfWord.from_u32(EC1_WORD) for c in EC1})
+        h = self.boot(dataclasses.replace(COLD, initial_vf=initial), accepted_dir=self.accepted())
+        self.read(h)
+        plan, result = self.restore(h)
+        self.assertEqual(plan["rounds"], 1)
+        self.assertTrue(result["residual"], result)
+        after = self.read(h)
+        self.assertTrue(all(c["match"] for c in after["accepted_match"]), after["accepted_match"])
+        self.assertEqual(self.sim.vf(12).ratio, 48)
+
+
+class SaveAndAccept(CompleteCase):
+    def test_save_is_the_read_with_the_edits_over_it(self) -> None:
+        h = self.boot(COLD)
+        self.read(h)
+        r = h.call("s", "profiles.save", {"name": "mine", "intent": rows(row("P3", points={"53": -40}), row("EC2", curve=-10))})
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["result"]["complete"], r["result"]["units"], r["result"]["points"]), (True, 12, 88))
+        record = ProfileStore(self.audit.parent / "profiles", euid=__import__("os").geteuid()).load("mine")
+        prof = load_profile(record["profile"])
+        prof.check_complete(TOPO)
+        self.assertEqual({(c.kind, c.index): c.offset_mv for c in prof.entries}[("E", 8)], -10)
+        p3 = {p.point: (p.offset_mv, p.expect_ratio) for p in prof.points if (p.kind, p.index) == ("P", 3)}
+        self.assertEqual(p3[5], (-40, 53))
+        self.assertEqual(p3[6], (0, 55))  # the untouched points are stated: 0
+        self.assertEqual({c.fused_top_ratio for c in prof.entries if c.kind == "P"}, {fused_top_ratio(self.sim.fused_word(0))})
+        self.assertIsNotNone(prof.turbo)  # both tables of the read
+        plan = self.plan(h, {"profile": "mine"})
+        self.assertTrue(plan["complete"])
+        self.apply_ok(h, plan)
+        self.assertEqual(self.word(3, 5).offset_raw, VfWord.mv_to_offset_raw(-40))
+        self.assertEqual({self.word(c).offset_raw for c in (16, 17, 18, 19)}, {VfWord.mv_to_offset_raw(-10)})
+
+    def test_save_without_edits_records_the_read(self) -> None:
+        h = self.boot(COLD)
+        self.read(h)
+        r = h.call("s", "profiles.save", {"name": "as-is", "intent": rows()})
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(r["result"]["complete"])
+
+    def test_accepting_an_applied_partial_profile_records_the_complete_state(self) -> None:
+        acc = self.tmp / "accepted-parent"
+        acc.mkdir()
+        h = self.boot(COLD, accepted_dir=acc / "accepted")
+        legacy = rows(row("P2", points={"55": -30}))  # a profile saved before G-148: a delta
+        ProfileStore(self.audit.parent / "profiles", euid=__import__("os").geteuid()).save("old-p2", legacy)
+        self.read(h)
+        listed = h.call("l", "profiles.list", {})["result"]["profiles"]
+        self.assertIn({"name": "old-p2", "source": "saved", "created": listed[0]["created"], "complete": False}, listed)
+        plan = self.plan(h, {"profile": "old-p2"})
+        self.assertTrue(any("partial" in w for w in texts(plan)), texts(plan))
+        self.apply_ok(h, plan)
+        self.read(h)
+        from .test_accept import accept_confirmed
+
+        r = accept_confirmed(h, {"name": "old-p2"})
+        self.assertTrue(r["ok"], r)
+        self.assertTrue(r["result"]["complete"])
+        current = (acc / "accepted" / "CURRENT").read_text()
+        self.assertEqual([line for line in current.splitlines() if line.startswith("profile")], ["profile = profiles/old-p2.toml"])
+        prof = load_profile(acc / "accepted" / "profiles" / "old-p2.toml")
+        self.assertTrue(prof.complete)
+        self.assertEqual(len(prof.entries), 12)
+        words = _parse_expected((acc / "accepted" / "EXPECTED-words.txt").read_text())
+        p2 = TOPO.resolve("P", 2).cpu
+        self.assertEqual(VfWord.from_u32(words[p2][6]).offset_raw, VfWord.mv_to_offset_raw(-30))  # the same words as the profile
+        self.assertEqual({p.offset_mv for p in prof.points if (p.kind, p.index, p.point) == ("P", 2, 6)}, {-30})
+
+    def test_accepting_a_partial_profile_that_is_not_applied_is_refused(self) -> None:
+        acc = self.tmp / "accepted-parent"
+        acc.mkdir()
+        h = self.boot(COLD, accepted_dir=acc / "accepted")
+        ProfileStore(self.audit.parent / "profiles", euid=__import__("os").geteuid()).save("old", rows(row("P2", points={"55": -30})))
+        self.read(h)
+        r = h.call("a", "profiles.accept", {"name": "old"})
+        self.assertEqual((error_code(r), r["error"]["detail"]["check"]), ("REFUSED", "NOT_APPLIED"))
+
+
+class AnotherCpu(CompleteCase):
+    def test_a_complete_profile_made_on_another_cpu_is_refused(self) -> None:
+        acc = self.accepted()
+        path = acc / "profiles" / "accepted-2026-10-04.toml"
+        path.write_text(path.read_text().replace("fused_top_ratio = 46", "fused_top_ratio = 47").replace("expect_ratio = 46", "expect_ratio = 47"))
+        h = self.boot(COLD, accepted_dir=acc)
+        self.read(h)
+        r = h.call("p", "tune.plan", {"intent": {"restore": "accepted"}})
+        self.assertEqual((error_code(r), r["error"]["detail"]["check"]), ("REFUSED", "PROFILE_TOPOLOGY"))
+        self.assertIn("another CPU", r["error"]["message"])
+
+    def test_without_a_read_the_planner_refuses_the_write_on_the_live_0x09(self) -> None:
+        acc = self.accepted()
+        path = acc / "profiles" / "accepted-2026-10-04.toml"
+        path.write_text(path.read_text().replace("fused_top_ratio = 57", "fused_top_ratio = 58").replace("expect_ratio = 57", "expect_ratio = 58"))
+        h = self.boot(COLD, accepted_dir=acc)
+        plan = self.plan(h, {"restore": "accepted"})
+        r = self.apply(h, plan)
+        self.assertEqual(error_code(r), "REFUSED")
+        self.assertFalse([q for q in self.sim.requests if q.cmd == 0x11])
+
+    def test_a_complete_profile_missing_a_unit_is_refused(self) -> None:
+        acc = self.accepted()
+        path = acc / "profiles" / "accepted-2026-10-04.toml"
+        text = path.read_text()
+        cut = text.index('[[core]]\nkind = "E"\nindex = 12')
+        end = text.index("[[point]]")
+        points = [blk for blk in text[end:].split("\n\n") if 'kind = "E"\nindex = 12\n' not in blk]
+        path.write_text(text[:cut] + "\n\n".join(points))
+        h = self.boot(COLD, accepted_dir=acc)
+        r = h.call("p", "tune.plan", {"intent": {"restore": "accepted"}})
+        self.assertEqual((error_code(r), r["error"]["detail"]["check"]), ("REFUSED", "PROFILE_TOPOLOGY"))
+        self.assertIn("EC3", r["error"]["message"])
+
+
+class SavedProfileTurboTables(TuneCase):
+    """G-231: the plan's step list (and so its ``writes``) lists a ``[turbo]`` table write only for a table that differs from the one the CPU holds -- the same
+    comparison the planner makes when the apply builds its steps (``planner.py``: ``pack_turbo(ratios) == the word read`` -> no write). A saved complete profile
+    carries both tables of the read, so restoring it must not announce table writes it will not send."""
+
+    def save_as_is(self, h: Any) -> dict[str, Any]:
+        r = h.call("s", "profiles.save", {"name": "as-is", "from": "read"})
+        self.assertTrue(r["ok"], r)
+        return r["result"]
+
+    def test_tables_the_cpu_holds_are_not_listed_or_counted(self) -> None:
+        h = self.boot(COLD)
+        self.read(h)
+        saved = self.save_as_is(h)
+        self.assertTrue(saved["turbo"])  # the profile carries both tables of the read
+        prof = load_profile(ProfileStore(self.audit.parent / "profiles", euid=__import__("os").geteuid()).load("as-is")["profile"])
+        self.assertIsNotNone(prof.turbo)
+        assert prof.turbo is not None
+        self.assertEqual((list(prof.turbo.e), list(prof.turbo.p)), ([48] * 8, [57, 57, 55, 55, 55, 55, 55, 55]))  # the CPU's own tables (simulator defaults, 0x3737373737373939)
+        plan = self.plan(h, {"profile": "as-is"})
+        self.assertEqual(plan["steps"], [])  # no word differs, the tables included: nothing to list
+        self.assertEqual(plan["writes"], 0)
+        res = self.apply_ok(h, plan)
+        self.assertEqual((res["writes_sent"], res["msr_writes"]), (0, 0))  # the executor agrees: no table write either
+
+    def test_only_the_table_that_differs_is_listed(self) -> None:
+        h = self.boot(COLD)
+        self.read(h)
+        self.save_as_is(h)
+        self.sim.wrmsr(0, 0x1AD, pack_turbo([56] * 8))  # the CPU's P table moves under the saved profile (an external wrmsr): E stays [48] * 8
+        self.read(h)
+        plan = self.plan(h, {"profile": "as-is"})
+        self.assertEqual([(s["kind"], s.get("table")) for s in plan["steps"]], [("write_msr", "p")])  # the differing table alone
+        self.assertEqual(plan["writes"], 1)

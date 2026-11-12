@@ -1,0 +1,13 @@
+#!/usr/bin/python3 -I
+# linux-xtu CLI launcher (assessment 06 F3). Installed to /usr/lib/linux-xtu/linux-xtu-cli, root-owned, mode 0755. The Linux restore script runs
+# THIS as root (sudo /usr/lib/linux-xtu/linux-xtu-cli apply ...), never tools/linux-xtu.py from a checkout: root imports only the installed, root-owned
+# tree below (`-I`: no PYTHONPATH/user site, no script directory or cwd on sys.path). Every hardware command still needs LINUX_XTU_ALLOW_MAILBOX=1 and
+# the CLI's own typed "CONFIRM <token>".
+import sys
+
+sys.dont_write_bytecode = True  # the tree is precompiled at install time; root never writes into it afterwards
+sys.path.insert(0, "/usr/lib/linux-xtu")
+
+from linux_xtu.cli import main  # noqa: E402
+
+sys.exit(main())

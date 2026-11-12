@@ -1,0 +1,200 @@
+/* Plot core (desktop/DESIGN.md §5.14): one grammar for every chart and every Tips diagram.
+   Traces: measured = fg solid · factory = fg3 dashed · edit = set · channels (P/E/ring) only when several units share a plot.
+   Status colours never appear inside a plot area. x is a real scale (ratio, MHz, time) — never evenly spaced categories. */
+
+.lx-plot {
+  position: relative;
+  min-width: 0;
+}
+
+.lx-plot svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  overflow: visible;
+  font-family: var(--mono);
+  font-size: var(--t-xs);
+}
+
+.lx-plot .lx-gridl {
+  stroke: var(--rule);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.lx-plot .lx-axisl {
+  stroke: var(--rule-strong);
+  stroke-width: 1;
+  shape-rendering: crispEdges;
+}
+
+.lx-plot .lx-tick {
+  fill: var(--fg3);
+}
+
+.lx-plot .lx-axis-t {
+  fill: var(--fg3);
+  font-family: var(--sans);
+  font-size: var(--t-xs);
+}
+
+/* traces */
+.lx-plot .lx-tr {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.lx-plot .lx-tr--meas { stroke: var(--meas); }
+.lx-plot .lx-tr--base { stroke: var(--base); stroke-width: 1; stroke-dasharray: 4 3; }
+.lx-plot .lx-tr--set { stroke: var(--set); }
+.lx-plot .lx-tr--p { stroke: var(--ch-p); }
+.lx-plot .lx-tr--e { stroke: var(--ch-e); }
+.lx-plot .lx-tr--r { stroke: var(--ch-r); }
+.lx-plot .lx-tr--approx { stroke-dasharray: 2 3; } /* a segment whose exact shape is not measured */
+
+/* markers: squares (points), diamonds (a value read from the CPU, e.g. the fused top point) */
+.lx-plot .lx-mk {
+  fill: var(--n1);
+  stroke: var(--meas);
+  stroke-width: 1.25;
+}
+
+.lx-plot .lx-mk--base {
+  stroke: var(--base);
+}
+
+.lx-plot .lx-mk--set {
+  fill: var(--set);
+  stroke: var(--set);
+}
+
+.lx-plot .lx-mk--solid {
+  fill: var(--meas);
+}
+
+/* reference lines (PL1, PL2, PL4, TjMax): dashed fg2 with a label at the right end */
+.lx-plot .lx-ref {
+  stroke: var(--fg2);
+  stroke-width: 1;
+  stroke-dasharray: 6 4;
+  shape-rendering: crispEdges;
+}
+
+/* shaded zone (a window, a range): n2/n3, never a hue */
+.lx-plot .lx-zone {
+  fill: var(--n3);
+  opacity: 0.6;
+}
+
+/* direct labels at line ends and annotation text */
+.lx-plot .lx-lbl-t {
+  fill: var(--fg2);
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+}
+
+.lx-plot .lx-lbl-t--set { fill: var(--set); }
+.lx-plot .lx-lbl-t--strong { fill: var(--fg); font-weight: var(--w-med); }
+.lx-plot .lx-lbl-t--dim { fill: var(--fg3); }
+
+.lx-plot .lx-lead {
+  stroke: var(--fg3);
+  stroke-width: 1;
+  fill: none;
+}
+
+.lx-plot .lx-lead--set {
+  stroke: var(--set);
+}
+
+/* an invalid element in a teaching diagram (e.g. a rising turbo bucket): crossed, fg3 — not red */
+.lx-plot .lx-bad {
+  stroke: var(--fg3);
+  stroke-width: 1.25;
+  stroke-dasharray: 2 2;
+  fill: none;
+}
+
+/* hover: a vertical cursor and one readout line pinned top-left — it never follows the pointer */
+.lx-plot .lx-cursor {
+  stroke: var(--fg3);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  shape-rendering: crispEdges;
+}
+
+.lx-plot-ro {
+  position: absolute;
+  top: 0.25rem;
+  left: 3.5rem;
+  display: flex;
+  gap: var(--s3);
+  padding: 2px 0.375rem;
+  background: var(--n1);
+  border: var(--bw) solid var(--rule-strong);
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg2);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.lx-plot-ro b {
+  color: var(--fg);
+  font-weight: var(--w-med);
+}
+
+/* legend under a plot: line swatches + words, one row */
+.lx-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem var(--s4);
+  padding: 0.25rem 0 0;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+}
+
+.lx-sw {
+  display: inline-block;
+  width: 1rem;
+  height: 0;
+  border-top: 1.5px solid var(--meas);
+}
+
+.lx-sw--base { border-top: 1px dashed var(--base); }
+.lx-sw--set { border-top-color: var(--set); }
+.lx-sw--p { border-top-color: var(--ch-p); }
+.lx-sw--e { border-top-color: var(--ch-e); }
+
+.lx-sw--ref { border-top: 1px dashed var(--fg2); }
+
+.lx-sw-mk {
+  display: inline-block;
+  width: 0.4375rem;
+  height: 0.4375rem;
+  border: 1.25px solid var(--meas);
+  background: var(--n1);
+}
+
+.lx-sw-mk--set {
+  background: var(--set);
+  border-color: var(--set);
+}
+
+/* a plot inside a panel body */
+.lx-plotbox {
+  padding: var(--s3) var(--s3) 0;
+}
+
+.lx-legend--pad {
+  padding: 2px var(--s3) var(--s2);
+}

@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Linux XTU</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<link rel="preload" href="fonts/IBMPlexSans-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="fonts/IBMPlexMono-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles/tokens.css">
+<link rel="stylesheet" href="styles/base.css">
+<link rel="stylesheet" href="styles/frame.css">
+<link rel="stylesheet" href="styles/controls.css">
+<link rel="stylesheet" href="styles/tables.css">
+<link rel="stylesheet" href="styles/panels.css">
+<link rel="stylesheet" href="styles/hints.css">
+<link rel="stylesheet" href="styles/plots.css">
+<link rel="stylesheet" href="styles/tips.css">
+<link rel="stylesheet" href="styles/overview.css">
+<link rel="stylesheet" href="styles/stress.css">
+<link rel="stylesheet" href="styles/curves.css">
+<link rel="stylesheet" href="styles/tune-rt.css">
+<link rel="stylesheet" href="styles/tune.css">
+<link rel="stylesheet" href="styles/profiles.css">
+<link rel="stylesheet" href="styles/system.css">
+<link rel="stylesheet" href="styles/audit.css">
+<link rel="stylesheet" href="styles/setup.css">
+<link rel="stylesheet" href="styles/apply.css">
+</head>
+<body>
+<!-- The frame of desktop/DESIGN.md §4. app.js fills each part; screens render into #screen. -->
+<div id="app" class="lx-app">
+  <header id="top" class="lx-top"></header>
+  <nav id="nav-rail" class="lx-rail"></nav>
+  <div id="work" class="lx-work">
+    <div id="work-head" class="lx-head"></div>
+    <div id="stage" class="lx-stage">
+      <main id="screen" class="lx-body" tabindex="-1" aria-labelledby="work-title"></main>
+      <section id="drawer" class="lx-sheet" data-open="false" hidden inert aria-hidden="true"></section>
+      <div id="toasts" class="lx-toasts"></div>
+    </div>
+    <div id="ctx" class="lx-ctx"></div>
+  </div>
+  <div id="pending-bar" class="lx-pend" hidden></div>
+  <footer id="readout" class="lx-read"></footer>
+</div>
+<noscript>Linux XTU needs JavaScript (it is a local desktop UI; nothing is loaded from the network).</noscript>
+<script type="module" src="app.js"></script>
+</body>
+</html>

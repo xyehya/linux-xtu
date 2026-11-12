@@ -1,0 +1,149 @@
+/* Tune screen (desktop/DESIGN.md §9.2): layout of the Cores tab only. Every look comes from the lx- components (tables, fields, bands, plot, why lines);
+   values come from tokens.css. Linked from index.html (no injected stylesheet). */
+
+/* ---------------------------------------------------------------- the tab panel */
+.lx-tune-panel[data-tab="cores"] {
+  height: 100%;
+}
+
+.lx-tune-panel[data-tab="cores"] > .lx-panel[data-empty] {
+  height: 100%;
+}
+
+/* units pane | inspector: both fill the body and scroll inside their panel (the body itself never scrolls on Cores) */
+.lx-tune-cores {
+  height: 100%;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+/* ---------------------------------------------------------------- inspector sections */
+.lx-tune-sec + .lx-tune-oc,
+.lx-tune-oc + .lx-tune-sec {
+  margin-top: 0;
+}
+
+.lx-tune-oc + .lx-tune-sec,
+.lx-tune-sec + .lx-tune-sec {
+  border-top: var(--bw) solid var(--rule-strong);
+}
+
+/* a band holding fields: the controls sit on the 28 px band; a narrow inspector lets the OC band take a second line instead of clipping */
+.lx-tune-cores .lx-band .lx-field {
+  flex: 0 0 auto;
+}
+
+.lx-tune-oc > .lx-band {
+  flex-wrap: wrap;
+  height: auto;
+  min-height: var(--band);
+  row-gap: 0;
+}
+
+.lx-tune-oc > .lx-band > .lx-band-end {
+  min-height: var(--band);
+}
+
+/* the why lines of a section or band, said once, under it */
+.lx-tune-whys {
+  padding: var(--s1) var(--s3) var(--s2);
+  border-bottom: var(--bw) solid var(--rule);
+}
+
+.lx-tune-oc > .lx-tune-whys {
+  border-bottom: 0;
+}
+
+.lx-tune-whys[hidden] {
+  display: none;
+}
+
+.lx-tune-whyline {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.lx-tune-whyline[hidden] {
+  display: none;
+}
+
+.lx-tune-whyline > .lx-why {
+  flex: 0 1 auto;
+}
+
+/* the point column: a grey tag before the number (OC, OC slot, k of n units) */
+.lx-tune-ptag {
+  margin-right: var(--s1);
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+/* the "?" text opened from a band sits under the band, inset like the panel */
+.lx-tune-sec > .lx-more,
+.lx-tune-oc > .lx-more {
+  padding: var(--s2) var(--s3);
+  border-bottom: var(--bw) solid var(--rule);
+}
+
+/* the legend swatch of a line drawn where the behaviour has not been measured (the plot's approximate trace) */
+.lx-tune-sw-approx {
+  border-top-style: dotted;
+}
+
+/* a module tab with several parts (Frequency until R-S2: turbo tables, then ratio caps) */
+.lx-tune-part + .lx-tune-part {
+  margin-top: var(--s6);
+}
+
+/* QA-03: when the inspector is wide (a large screen, no Review sheet beside it) a V/F section puts its plot beside the table instead of under it: the
+   table keeps a readable width and the extra width goes to the plot. A narrower inspector keeps the stacked layout. Container query: the inspector's
+   own width decides, whatever the window and the sheet are doing. */
+.lx-panel[data-pane="inspector"] > .lx-panel-b {
+  container-type: inline-size;
+}
+
+@container (min-width: 80rem) {
+  .lx-tune-sec[data-section] {
+    display: grid;
+    grid-template-columns: minmax(0, 46rem) minmax(0, 1fr);
+    grid-auto-flow: row dense;
+    align-items: start;
+  }
+
+  .lx-tune-sec[data-section] > .lx-band,
+  .lx-tune-sec[data-section] > .lx-more,
+  .lx-tune-sec[data-section] > .lx-tune-whys {
+    grid-column: 1 / -1;
+  }
+
+  .lx-tune-sec[data-section] > .lx-tbl,
+  .lx-tune-sec[data-section] > .lx-tfoot-note {
+    grid-column: 1;
+  }
+
+  .lx-tune-sec[data-section] > .lx-plotbox {
+    grid-column: 2;
+    grid-row: span 2;
+  }
+
+  .lx-tune-sec[data-section] > .lx-legend {
+    grid-column: 2;
+  }
+}
+
+/* QA-24: the module tabs (Frequency, Power, Ring & uncore) fill the body's height; the tiles' panels grow (tune-rt.css), and scroll inside only when
+   the content really overflows. (Cores fills through the data-tab="cores" rules above.) */
+.lx-tune-panel:not([data-tab="cores"]) {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+.lx-tune-panel:not([data-tab="cores"]) > .lx-tune-part:last-child {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}

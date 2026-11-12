@@ -1,0 +1,221 @@
+# Registers, MSRs, mailbox commands — single source of truth
+
+Encodings for Arrow Lake-S. Code cites the section names below; keep them. Measured values are from one Core Ultra 9 285K (the "reference
+machine"); its full readings are in `examples/reference-285k/notes/platform.md` (one sample, not a spec).
+
+Status legend: `decomp` = read from Intel's XTU code (usable as a constant only after a MEASURED read-back) · `doc` = primary public source ·
+`lead` = COMMUNITY/UNVERIFIED (never a constant) · `seen` = observed in XTU's UI on the reference machine · `measured` = read on the reference machine ·
+`trace` = recorded from OCCT/HWiNFO mailbox traces on the reference machine (corroboration).
+Write allowlist: a register joins the guard's allowlist only via a DECISIONS.md entry plus a MEASURED read (the guard's tables in `src/linux_xtu/guard/policy.py`).
+`[DECOMPILED …]` file names (`win-xtu-decompile-mailbox.md`, `win-xtu-decompile-controls.md`, `win-xtu-inventory.md`, `win-xtu-live-trace.md`,
+`win-throttlestop-fivr.md`, `lnx-interfaces.md`) name notes of the earlier research on the reference machine; they are not part of this repository.
+
+## OC mailbox — request model (from XTU)
+XTU builds a request tuple `(cmd u8, P1 u8, P2 u8, data u32, scope)` and hands it to native `XtuProvider.dll` as an IPF JSON `MailboxAction` on `Platform.SOC.Overclocking`. `decomp`
+- **Scope:** package (no core) or core-scoped: logical core `L` (group `L/64`, affinity mask bit `L%64`). **The core is chosen only by the scope, not by P1/P2.** P and E cores use the same field ids and the same request (P1=0, P2=0).
+  There is no E-cluster/module address in XTU. "Logical core index" = position in IPF `Platform.SOC.Info.Core` = the Windows logical processor, which is not the Linux CPU number (`platform-arl-s.md` §2).
+- **Wire packing — decoded independently from XTU's IPF driver `ipf_cpu.sys` (T-005) and from ThrottleStop 9.7.3 (T-006), both `decomp`; matches FSP/V0LTpwn/kernel `doc`; round-trips MEASURED on Linux and Windows (2026-10-01/02).**
+  WRMSR **MSR 0x150** with the 64-bit value `1<<63 | P2<<48 | P1<<40 | cmd<<32 | data` (i.e. `hi = 0x80000000 | P2<<16 | P1<<8 | cmd`, `lo = data`). Completion: poll RDMSR 0x150 until bit 63 clears; status = the completion code, the **full byte `[39:32]`** (`hi & 0xFF`; 0 = OK; the code uses the full byte; ThrottleStop masks `& 0x1F`, see "Return codes"); result data in `lo`.
+  **Public confirmation `[DOC coreboot src/drivers/intel/oc_mailbox/oc_mailbox.h]` (2026-11-11 cross-check):** `MSR_OC_MAILBOX` = 0x150; the high dword has `cmd_code : 8`, `param1 : 8`, `param2 : 8` and `run_busy` at bit 31 (= bit 63 of the MSR); the completion code is returned in `cmd_code`. The wire layout above is therefore `doc`, not only `decomp`.
+  ThrottleStop's driver has **no CPU selection**: RDMSR/WRMSR run on the calling thread's CPU, so the caller pins (`SetThreadAffinityMask`). Its write sites mostly fire-and-forget (no poll, no timeout, no readback) — our code must poll with a timeout and read back.
+  Example (legacy plane word, CPU Core, −50 mV, adaptive): `0x80000011_F9A00000`. Driver IOCTLs `0x80006448` (RDMSR) / `0x8000644C` (WRMSR) are ThrottleStop-specific.
+  **XTU/IPF sequence (T-005):** `ipf_cpu.sys` pins the request's `(group, mask)` CPU (`KeSetSystemGroupAffinityThread`; package scope = whichever CPU), reads MSR 0x150 until bit 63 = 0 (10 ms sleeps, ≈10 s cap; timeout ⇒ **abort without writing**), WRMSR, polls again;
+  response data `[31:0]`, completion code `[39:32]`; no retry, no lock below XTU's own mutex, no rollback; the driver accepts only cmds 0x01–0x09 and 0x10–0x29. There is **no MMIO/PCI path** for the OC mailbox: every request, *including reads*, is a WRMSR to 0x150
+  (hardware-write tier). Example: `SET 0x11 P1=0 P2=0 data=D` → `0x8000001100000000 | D` (`D=0x0004A02D` → `0x80000011_0004A02D`). "Logical core L" = Windows logical processor L (group L/64, bit L%64).
+- Cross-process mutex `Global\Access_Intel_OC_Mailbox` in XTU (other Intel tools share the mailbox). ICC watchdog (device `ACPI\INTC109F`) is armed before a no-reboot apply (10 s default). `decomp`
+
+## V/F data word — cmd 0x10 (read) / 0x11 (write), P1=0 P2=0, core-scoped  `decomp` + `doc`
+Field widths confirmed `[DOC coreboot src/drivers/intel/oc_mailbox/oc_mailbox.h]`: `max_ratio_limit : 8`, `voltage_target : 12` (U12.2.10 V), `target_mode : 1`, `voltage_offset : 11` (S11.0.10 V). coreboot encodes an offset as `DIV_ROUND_CLOSEST(abs_mv * 1024, 1000)`, the same result as the `+512` rule below for every integer mV.
+| Bits | Field | Encoding |
+|---|---|---|
+| [7:0] | ratio | integer multiplier (×BCLK); ARL-S is *granular*: integer part here + bins in cmd 0x26/0x27 `[15:8]` (`g - (w mod g)`, g from 0x26 `[2:0]`) |
+| [19:8] | voltage target (override) | 12 bit, S2.10: V = raw/1024 (0x48C → 1.1367 V, 0x4A0 → 1.1563 V) |
+| [20] | mode | 0 = adaptive, 1 = static/override |
+| [31:21] | voltage offset | 11 bit signed two's complement, LSB = 1/1024 V (XTU shows raw·1000/1024 mV); XTU allows −1000…+999 mV (raw 0x400…0x3FF); −50 mV = 0x7CD |
+ThrottleStop uses the same word (`decomp`): display ratio = `w&0xFF`, target = `((w>>8)&0xFFF)/1024` V, mode = `w&0x100000` (Static), offset sign-extended 11 bit ×1000/1024 mV; mV→raw = `(mV·1024+512)/1000` (round half up on magnitude), −50 mV → raw 51 → `0xF9A00000`.
+Its offset slider spans ±128 / ±256 / −1024…+1023 raw (≈ ±125 mV, ±250 mV, −1000…+999 mV).
+Checks against XTU's UI `seen`: its "Voltage Override" values decode with this layout (e.g. 1.137 V = 0x48C); they are the cmd `0x09` words, not `0x10` (section "Measured via XTU's level-4 log").
+**Third confirmation `trace` (OCCT/HWiNFO mailbox traces on the reference machine):** `0x03400030` = point 4 / 48×, `0x03400039` = point 8 / 57× with offset raw 26 (+25.39 mV) and **V-target field 0** (an offset-only write, like ThrottleStop's V/F-point writes that send "offset bits only"; corrected by T-010 — bits [19:8] of `0x03400030` are 0, not 0x400) — **per-V/F-point offsets exist and were written (P2 = point index)**;
+ring (domain 2) 40× target `0x4C8` = 1195.31 mV; NGU (domain 7) 34× `0x4BD` = 1184.57 mV; `cmd 0x1C` high byte = fused max ratio (285K: E 46×, P 55×/57×); `cmd 0x16` data = IccMax in 0.25 A; domain 6 = memory subsystem.
+**XTU's write procedure** (a description of behaviour, not a recipe): (1) package scope: read cmd 0x14 (P1=0,P2=0); if bit 3 ("PerCore Voltage Enable") is 0, write cmd 0x15 with `old|8`; restore afterwards. (2) core scope: read 0x10 → patch only the wanted bit-slices →
+write whole word with 0x11 (read-modify-write; for P2≠0 the read word is masked `&0xFFFFFF00`). (3) a ratio write also writes cmd 0x1D (P1=0,P2=0) with data = ratio (favored-core word, no RMW). (4) cores whose merged words are equal share one action. (5) re-read all per-core fields.
+**No external oracle** exists for XTU's "PerCore Voltage Enable" path: ThrottleStop 9.7.3 never touches cmd 0x15 bit 3 and has no per-core *voltage* write (its "Per Core" = favored-core ratio via 0x1C/0x1D pinned per CPU).
+Ordering: raising performance → voltage first, lowering → frequency first; markers `0xE0000002/4` bracket a batch. No hardware rollback on failure (watchdog + persistence only). `decomp` (T-002 §Apply flow)
+
+## Voltage semantics (ARL-S) — behaviour in `platform-arl-s.md` §3
+Adaptive voltage `[19:8]` (mode `[20]`=0) sets the **OC-ratio point** only (P-core point 9, E-core point 7, added when the OC ratio exceeds the top fused ratio); fused points accept **offsets only** (no ratio or target) `[COMMUNITY SkatterBencher]`; per-point offset writes work `[MEASURED lnx 2026-10-02]`; `[31:21]` offset with P2=0 = whole-curve offset `[MEASURED lnx 2026-10-11]`;
+per-point offsets = P2 1..n (n = table length, read live; hidden by XTU on ARL-S) `[MEASURED lnx 2026-10-02]`. E-core voltage is per **cluster of 4** `[COMMUNITY]`. Community default ceiling = top fused VID + 200 mV (285K: P 1.581 V, E 1.270 V; absolute max 1.681 / 1.370 V) `[COMMUNITY]` — **superseded** by the live `0x28` limits on the reference chip (P 1.625 V, E 1.355 V, ring 1.512 V, "Limits in the tool" below); the app uses the `0x28` read, never this formula.
+
+## Mailbox commands (rd/wr; P1 = domain or index; P2)  `decomp` unless noted
+Public-source status (2026-11-11 cross-check): only the V/F word of `0x10/0x11` is in a public source (coreboot, above). Commands `0x14`–`0x1D` and `0x26`–`0x28` were **not found** in any public source (coreboot, FSP headers, kernel); they stay `decomp` + `measured`.
+| Cmd | Name | P1 | P2 | Data |
+|---|---|---|---|---|
+| 0x01 | OCCapabilityRead | domain | 0 | [7:0] fused max OC ratio · [8] ratio-OC ok · [9] voltage-override ok · [10] voltage-offset ok |
+| 0x02 | PerCoreCapabilityRead | word `n/4` (n=active cores−1) | 0 (1 = E-core 1C turbo) | byte `n%4` = fused max OC ratio for n+1 active cores |
+| 0x03 | DdrInfoRead | SAGV point 0..3 | 0 | [7:0] point ratio · [19:16] gear code · P1=0 [13:10] channels |
+| 0x04 | ICCMaxVRRead | 0 | 0 | [11:8] core IccMax VR addr · [12] SVID en · [16:13] GT VR addr · [17] GT SVID en. XTU layout favoured `[MEASURED lnx 2026-11-11]`: `0x04` = `0x84002000`; `0x16` answers rc 0 with P1 = `[11:8]` = 0 and rc `0x6` with ThrottleStop's field-2 value (8). ThrottleStop decodes 5×5-bit fields from bit 0 (disagrees). Bits 26 and 31 of the word stay undecoded; C-1 in `mailbox-recon-summary.md` §4 |
+| 0x05 | ReferenceClkMonitorRead | 0 int SoC · 1 ext SoC · 2 int CPU · 3 ext CPU | 0 | raw monitor (unit unknown); >0 on "internal" ⇒ that BCLK domain is settable |
+| 0x09 | VoltageFloorRead | 0x11 (dom floors) / 0x21 (AVX scale) | domain | same fields as 0x10 (floors); used for UVP lower bounds |
+| **0x10/0x11** | VoltageFreqRead/Write | domain (below) | 0 = whole domain/core; 1..15 = V/F point (hidden on ARL-S) | see V/F data word |
+| **0x14/0x15** | MiscGlobalConfigRead/Write | 0 | 0 | [3] **PerCore Voltage Enable** (ARL client); [0],[1] server FIVR |
+| 0x16/0x17 | ICCMaxRead/Write | VR addr (from 0x04) | 0 | [10:0] U9.2 (0.25 A/LSB, raw 4..2046) · [31] unlimited. Unit and range `[DOC Intel FSP]` ("IA ICCMAX value is represented in 1/4 A increments … range 4-2047"); FSP has an `IaIccUnlimitedMode` knob but publishes no mailbox bit, so bit 31 stays `decomp` + measured: P1=0 read = `0x80000000` with BIOS 511 A + "unlimited" (bit 31 set, `[10:0]` = 0) `[MEASURED lnx 2026-11-11]` |
+| 0x18/0x19 | ResidencyStateRegulation | 0 | 0 | [1] ring-to-core offset disable · [2] TVB **disable** · [4] further disable bit (ThrottleStop: bits 1, 2, 4 are all *disable* bits — resolves the polarity question). Measured `0x18` = `0x1E` on the reference chip `[MEASURED lnx 2026-11-11]` = bits 1, 2, 3 and 4 set; **bit 3 is not named by any source** (TVB disabled by bit 2) |
+| 0x1A/0x1B | AVXOffsetControl | 0 | 0 | [9:5] AVX2 negative core-ratio offset 0..31 (pre-ARL: [14:10] AVX-512 offset) |
+| 0x1C/0x1D | FavoredCoreRead/Write | 0 | 0 | rd [7:0] favored ratio, [15:8] fused; wr = whole word = ratio (no RMW) |
+| 0x22/0x23 | Bclk read/write | 0 SoC · 2 CPU | 0 | [19:0] BCLK, 0.001 scale; range 70…200 MHz; only if domain "internal" |
+| 0x24/0x25 | TVBRead/Write | 1/17 = per active-core bucket set1/2; 0/16 = per CCP set1/2 | bucket 0..7 or CCP(tile) | [7:0] temp cutoff · [15:8] ratio offset |
+| 0x26/0x27 | GranularRatio | 0 (core-scoped) | 0 | rd [2:0] granular index; r/w [15:8] ratio bins |
+| 0x28 | MaximumVoltageLimitRead | domain | 0 | [11:0] max voltage S2.10 (XTU uses raw−1; 0 ⇒ 2.0 V) |
+**Limits in the tool (G-137, D-039):** ratio ceiling = policy value clamped by `0x01 P1=0 [7:0]` of a CPU of that kind (needs `[8]` set; the reference P-cores read `0x778` = 120x `[MEASURED win 2026-10-01]`; XTU's decompile names no separate E domain for `0x01`, field ids 19-21 = "IA" for all core CPUs `[DECOMPILED win-xtu-decompile-controls.md]`, so the E value is read with P1=0 pinned to an E CPU, whether it differs from P is `[UNVERIFIED]`); V target ceiling = policy value clamped by `0x28 P1=0 [11:0] - 1 LSB` of a CPU of that kind (P 0x681 -> 1625 mV, E 0x56D -> 1355 mV on the reference chip `[MEASURED win 2026-10-01]`); offset -1000..+999 mV (field encoding). `0x1C` answers on E CPUs too (E `0x2E30` = [7:0] 48, [15:8] fused 46 `[MEASURED win 2026-10-01]`, `lnx 2026-10-11`): the `"auto"` ratio ceiling uses the **fused byte `0x1C[15:8]`** only (highest over the CPUs of the kind, + 3): P 0x3939 / 0x3737 -> 57 / 55 so P 57 + 3 = 60, E 0x2E30 -> 46 so E 46 + 3 = 49. `[7:0]` is the favored/current ratio (E 48, follows the BIOS turbo setting and a `0x1D` write), so it would ratchet; `[15:8]` is the fused value on both kinds in `msr/measured_baseline.FAVORED_WORD` `[MEASURED win 2026-10-01]`.
+Unused on ARL-S: 0x07 (fused per-core ratio/voltage), 0x12/0x13 (SVID, server), 0x20/0x21 (AVX scale), 0x1E/0x1F (real-time memory; RC 0x0A seen).
+**Domain P1 wire values:** 0 core/IA · 1 GT slice · 2 ring/cache (CLR) · 3 GT unslice · 4 SA (present but **not exposed by XTU on ARL**) · 7 NGU / "SA Fabric". (XTU's internal `MailboxDomain` enum values differ from the wire.)
+ThrottleStop plane indices (P1, `decomp`): 0 CPU Core · 1 GPU · 2 CPU (P) Cache · 3 iGPU Unslice · 4 System Agent · 5 Analog I/O (labelled "CPU E Cache" on hybrid — lead for ARL); it never uses 7.
+**Limits XTU applies:** ring `[MaxEfficiencyRatio … cap(0x01 P1=2)]`; NGU `[6 … cap(0x01 P1=7)]` (+ BIOS-mailbox SAGV ratio bits [15:8], 0 = dynamic); voltage override 0.5–2.0 V (cap from 0x28); offset −1000…+999 mV; UVP raises lower bounds from cmd 0x09;
+per-core ratio range `[MaxNonTurboRatio … fused max OC ratio]`. E-core cache/VccIO/VccU capability ids exist in code but are absent from this build's field table.
+
+## Return codes (`MailboxCompletionCode`)  `decomp`
+Hardware status = bits [39:32] (full byte, IPF driver; the codec's `Response.rc`); ThrottleStop masks `& 0x1F`; 0xFE/0xFF are XTU/provider-synthetic, never hardware. Ids 0x07, 0x12/0x13, 0x1E/0x1F, 0x20/0x21 are "unused on ARL-S": `Cmd` names/polarity for them are inferred (odd id = write) `[UNVERIFIED]`.
+0x00 Pass · 0x01 OCLocked · 0x02 UnsupportedDomain · **0x03 RatioExceedsLimits** (XTU converts to success for ratio-only per-core writes) · 0x04 VoltageExceedsMax · **0x05 OCNotSupported** (cmd 1 P1=0 ⇒ "hardware OC locked") ·
+0x06 FIVRError · 0x07 IccMaxInvalid · 0x08 IllegalCommandSelectedInParam1 · 0x09 InvalidAVXLevel · 0x0A RuntimeMemoryDisabled · 0x0B InvalidMemControllerId · 0x10 InvalidParam · **0x11 not in enum (unknown)** ·
+0x12 VoltageExceedsLimit · **0x13 UndervoltProtection** (XTU ignores it for P-core ratio-limit writes) · 0x1F UnrecognizedCommand · 0xFE UnsupportedCmd (XTU-synthetic) · 0xFF MailboxFailure (provider).
+Examples from XTU's log on the reference machine (`win-xtu-inventory.md`): `SET 0x11 … RC 3` = ratio above the limit; `SET 0x15 data 8 RC 1` = per-core switch refused (OCLocked; also seen twice with OC Lock off, C-11 in `mailbox-recon-summary.md` §4, open); `GET 0x01 P1=3 RC 5` = GT unslice not overclockable (probed at every start).
+
+## Not the mailbox
+Turbo ratio limits (P active-core table, E ranges) go through IPF properties `Performance.TurboRatio/TrlRange/EfficientCoreTurboRatio/EfficientCoreTrlRange` → MSR 0x1AD/0x1AE/0x650/0x651 (whole 64-bit, written on CPU 0) `decomp` (T-005 §6a; stale "unknown" wording fixed 2026-10-01, access-manifest C-10). Power limits, TCC, uncore ratio: IPF/MSR/MMIO (below).
+ARL-S constants in XTU `decomp`: 8 P-cores (max 32 E capacity, 16 present), 8 turbo buckets, 2 favored cores, per-core ratios/voltage/favored/granular = yes; V/F-curve, per-point offset, FIVR, AVX2 scale = no.
+
+## MSRs
+| MSR | Use | Source | Status / note |
+|---|---|---|---|
+| 0x150 | OC mailbox (wire format above; no MMIO path — every request incl. reads is a WRMSR) | V0LTpwn; kernel; coreboot `oc_mailbox.h` `doc`; XTU/IPF + ThrottleStop `decomp` | doc + measured; runtime writes gated by BIOS (OcSupport/OcLock/UVP) |
+| 0x1AD | turbo ratio limit: 8 bytes = active-core buckets 1..8 | turbostat | doc; XTU/IPF reads and writes the whole 64 bits of 0x1AD/0x1AE/0x650/0x651 (writes on CPU 0) `decomp`; still measure by read |
+| 0x650 | secondary turbo ratio limit (E-cores) | turbostat | doc; **resolved `measured`:** 0x1AE/0x651 are readable on ARL-S (P bucket core counts 1..8; E bucket core counts 1,2,3,4,6,8,12,16) — the earlier "ARL doesn't use 0x1AE" note was wrong |
+| 0x770 / 0x771 / 0x774 | HWP enable / capabilities / request | `intel_pstate` | doc; lower-only |
+| 0x620 / 0x621 | uncore ratio limit ([6:0] max, [14:8] min) / status | `intel_uncore_frequency` | doc; layouts confirmed by the kernel `intel_uncore_frequency` (`UNCORE_MAX_RATIO_MASK` GENMASK(6,0), `UNCORE_MIN_RATIO_MASK` GENMASK(14,8), `UNCORE_CURRENT_RATIO_MASK` GENMASK(6,0)); the SDM has no 0x621 entry, so `0x621 [31:16]` (UncVID) stays `measured` / community. Ring vs NGU vs D2D: `platform-arl-s.md` §11 (three independent settings; which one this limit governs is `[UNVERIFIED]`). XTU/IPF: 0x620 [6:0] max / [14:8] min, 0x621 [6:0] current ratio `decomp`; XTU also sets `UncoreMax/MinRatio` when the ring ratio changes |
+| 0x610 | PKG_POWER_LIMIT (PL1/PL2; bit 63 lock) | kernel RAPL | doc; XTU/IPF prefers MMIO 0x59A0/0x59A4 with this MSR as fallback `decomp` |
+| 0x601 | PL4 (telemetry key `pl4`, **read-only**, sampled since G-244) | kernel RAPL; SDM -093; IPF `decomp` | doc + measured; **enforced PL4 = 0x601 (W); the MMIO 0x59B0 copy is not enforced** [MEASURED lnx 2026-11-11, throttling.md §G]. Kernel: `rapl_ids` maps ARROWLAKE to `rapl_defaults_core` (no MSR PL4; ARL-H and ARL-U get `rapl_defaults_core_pl4`) `[DOC kernel intel_rapl_common.c]` — the kernel does not manage it on ARL-S, but the PCU enforces it. **Field width is open (B-11):** three public layouts. Kernel `POWER_LIMIT4_MASK` GENMASK(12,0) and turbostat `& 0x1FFF` read `[12:0]` (13 bits); IPF `decomp` reads `[14:0]`; SDM 335592-093 has Tiger Lake `[12:0]`, Meteor Lake `[15:0]` (in 0.125 A) and the Series 2 table (Table 2-58 `MSR_PKG_POWER_LIMIT_4`) `[15:0]` "PL4 Value in 0.125 W increments … if the value is 0, PL4 limit is disabled" (its intro names Lunar Lake 06_BDH; Arrow Lake-S 06_C6H is not named) `[DOC]`; coreboot writes `0x7fff`. The code decodes `[14:0]`. All sources agree for any value below 8192 units (1024 W), so every reading to date is unaffected; the unit W rests on `[DOC SDM Series 2]` + `[DECOMPILED IPF]` naming, and the experiment shows only that 0x601 binds. Open test: read 0x601 once after setting a BIOS PL4 of 1024 W or more (raw >= 0x2000, bit 13). Whether ASRock "Unlock VR Limit" moves 0x601: open (read 0x601 before and after toggling it in the BIOS) |
+| 0x1A2 | TEMPERATURE_TARGET; TCC offset; lock bit 31 | `intel_tcc.c` | doc; **TCC offset width: four conflicting sources** — kernel `intel_tcc.c` (ARL-S not listed, so the 7-bit default) · turbostat `adl_features` (6 bits) · SDM Meteor Lake `[30:24]` · EDK2/coreboot `[27:24]`; IPF DSP uses `[30:24]` `decomp`. Unresolved, and harmless: the code decodes only Tjmax `[23:16]` and never the offset field — keep it that way |
+| 0xE2 | PKG_CST_CONFIG_CONTROL; CFG lock bit 15 | coreboot | doc |
+| 0x10A | bit 23 = OC status (IPF DSP) | XTU/IPF `decomp` | read-only candidate |
+| 0xCE | PLATFORM_INFO: bit 24 = OC available (ThrottleStop shows "Not Available" when 0), bit 28 = programmable turbo ratio limits, [15:8] base ratio | ThrottleStop `decomp` (+Intel SDM) | read; measured ([28] = 1, [24] = 1 with OC unlocked) |
+| 0x194 | bit 20 = **OC lock**, [19:17] OC bins (IPF `decomp`) (ThrottleStop skips all FIVR/TRL writes and shows "Locked") | ThrottleStop `decomp` | read; measured ([20] = 0 with BIOS OC Lock off) |
+| 0x195 | bit 1 = **Undervolt Protection** indicator | ThrottleStop `decomp` | read-only candidate; never read |
+| 0x1AE / 0x651 | probed (with 0x650) by ThrottleStop on ARL; if they answer it enables turbo-ratio write paths (writes 0x1AD/0x1AE/0x650/0x651). MEASURED 2026-09-29: readable; 0x1AE = P bucket core counts 1..8, 0x651 = E bucket core counts 1,2,3,4,6,8,12,16 | `measured` | resolved |
+| 0x1FC | **bit 19 = energy-efficiency turbo** (IPF DSP `decomp`, replaces the earlier unsourced "bit 20" claim); bits 0/1/23 seen in ThrottleStop (meaning not recorded) — bit 20 "OC lock" claim remains unsourced | | do not use |
+
+## Measured on the reference machine (decodes) `measured`
+Values: `examples/reference-285k/notes/platform.md` §4-5. What the readings established:
+- `0x1AD` / `0x650`: one ratio byte per bucket, byte 0 = bucket 1; `0x1AE` / `0x651`: bucket core counts in the same byte order (285K: P 1..8, E
+  1,2,3,4,6,8,12,16). `0x1AE`/`0x651` are readable on ARL-S. The tool never derives or raises these tables from an OC ratio (D-050, supersedes the D-017
+  "bundled with the per-core apply" part): an OC ratio above the table's top bucket stays capped by the table until the operator edits it (plan warning `TURBO_BELOW_OC`).
+- `0x610` decodes as the SDM layout (PL1 `[14:0]`, PL2 `[46:32]`, lock `[63]`) with `0x606` units (0.125 W, 2^-14 J, 2^-10 s on the 285K).
+- `0x601` = **PL4, unit 0.125 W** (`[14:0]` as the code decodes it, see the MSR table for the width question; `0xd48` = 3400 x 0.125 = 425 W on the 285K; lock `[31]`, unlocked here) and it is the enforced PL4 — an earlier "425 A design current" reading was wrong. IccMax is separate (cmd `0x16`). The measurement shows that 0x601 binds [MEASURED lnx 2026-11-11, throttling.md §G]; the W unit rests on `[DOC SDM 335592-093 Table 2-58]` + `[DECOMPILED IPF]`, since 1/8 W and 1/8 A scale identically.
+- `0x620` = ring min/max ratio, `0x621` = current ring ratio. `0x1A2` = Tjmax `[23:16]` (105 C), TCC offset, lock bit 31.
+- **`0x198`: requested VID = `[47:32]`/8192 V; ratio = `[15:8]`** `[MEASURED lnx 2026-09-29]`. Not architectural: the SDM documents `[47:32]` "Core Voltage" x 1/2^13 only for Sandy Bridge (Table 2-20) `[DOC SDM SNB table]`; the architectural 0x198 has `[15:0]` only, and neither the kernel nor turbostat decodes the VID.
+- CPU map and Windows LP numbering: `platform-arl-s.md` §2.
+
+## Measured via XTU's level-4 log on Windows (S-03d…S-07, 2026-10-01) `measured win`
+Raw tables: baseline words `src/linux_xtu/msr/measured_baseline.py`, write sequences `tests/controls/test_measured_apply.py`, values in notes §4.
+- At stock (OC lock off, UVP off, no XTU tuning) `0x10 P1=0 P2=0` is `0x0` on every core except where the BIOS wrote an OC word; `0x14` = `0x8`
+  (PerCore Voltage Enable already set). GT `0x10 P1=1` = `0xF8600000` = −59.6 mV matched the GT −0.060 V applied in XTU: **offset decode confirmed**.
+- **`0x09 P1=17 P2=0` returns the fused V/F top point per core** (ratio `[7:0]`, voltage `[19:8]`): these — not the `0x10` word — are the "Voltage
+  Override" values the XTU UI shows.
+- **`0x1C[15:8]` is not a ratio cap on E cores** (reads the fused 46 on the 285K while XTU wrote 48 = `0x1C[7:0]` and the hardware accepted it).
+- **Raise ordering and `0x28` (design rule, XTU's own ordering `[DECOMPILED]`):** raise => voltage first then frequency; lower => frequency first;
+  `0x28` bounds the V target (XTU uses `raw-1`).
+- **Logical-core numbering of mailbox affinity masks (Windows LP) ≠ Linux CPU number**; the Linux side addresses `/dev/cpu/N/msr` with the Linux CPU id.
+
+**First real per-core write sequence (XTU, S-04/S-05, `measured win`):** `GET 0x14`→`GET 0x10`→`SET 0x11` (full word incl. V target = fused voltage)→`SET 0x1D` (= ratio)→`GET 0x26`→`SET 0x27` (= value read), all RC 0; read-back identical to the written word; XTU's revert word keeps the V target (`0x0005B439`, not the original `0x00000039`).
+
+- **Ring (P1=2) limits, first live read** `[MEASURED lnx 2026-10-19 05:56, tune.read via the desktop app; System > Tuning limits]`: cmd 0x28 P1=2 → **1.512 V** (XTU raw-1 rule applied), cmd 0x01 P1=2 → OC ratio limit **85×**. Same session: P 1.625 V / 120×, E 1.355 V / 120× (matches the Windows reads). The ring V/F walk ends at P2=10 with rc 0x11 (past the table), as expected.
+
+### Telemetry read allowlist (G-104, D-026) — `rdmsr` only, code `telemetry/msrio.py` `TELEMETRY_MSRS`; bits/decoding in `telemetry-sources.md`
+0xE7 MPERF, 0xE8 APERF `[DOC SDM]` · 0xCE PLATFORM_INFO [15:8] `measured` · 0x198 PERF_STATUS [47:32] V, [15:8] ratio `measured` ·
+0x19C / 0x1B1 THERM_STATUS [31] valid, [22:16] readout `[DOC SDM]`, ARL `[UNVERIFIED]` · 0x1A2 [23:16] Tjmax `measured` · 0x606 [12:8] energy unit
+`measured` · 0x611 PKG_ENERGY [31:0] `[DOC SDM]` · 0x64F core / 0x6B0 **graphics** limit reasons: bit tables in "Limit reasons" below (decoder
+`telemetry/limits.py`) · 0x6B1 **ring** limit reasons (G-229, orchestrator decision 2026-10-18: added to the telemetry set, read-only; XTU allowlists it RO
+`[DECOMPILED win-xtu-native-provider.md:101]`; bit table `[DOC edk2 SkylakeMsr.h]`, live on ARL `[UNVERIFIED]`; see `throttling.md`) · **0x601 PL4** (G-244, read-only; sampler key `pl4` = `{watts, locked, raw}`, decoded `[14:0]` x the 0x606 power unit; a zero field is reported unavailable; encoding and open width question in the MSR table above). Both are in `TELEMETRY_MSRS`. The set is separate from the guard's `PLAIN_MSR_READABLE` (unchanged). 0x150 (mailbox) refused by `TelemetryMsr`.
+
+### Limit reasons — 0x64F (core) and 0x6B0 (graphics) (G-215) `host lnx`, decoder `src/linux_xtu/telemetry/limits.py`
+**Names (resolves a repo mislabel).** Linux `arch/x86/include/asm/msr-index.h`: `MSR_PERF_LIMIT_REASONS = 0x64F` (under "Hardware P state interface"),
+`MSR_CORE_PERF_LIMIT_REASONS = 0x690`, `MSR_GFX_PERF_LIMIT_REASONS = 0x6B0`, `MSR_RING_PERF_LIMIT_REASONS = 0x6B1`
+`[DOC https://raw.githubusercontent.com/torvalds/linux/master/arch/x86/include/asm/msr-index.h]`. The SDM names for the Skylake-and-later client
+parts are `MSR_CORE_PERF_LIMIT_REASONS` = **0x64F**, `MSR_GRAPHICS_PERF_LIMIT_REASONS` = **0x6B0**, `MSR_RING_PERF_LIMIT_REASONS` = **0x6B1**, all "Package"
+scope (SDM Vol 4, May 2018, as transcribed in EDK2 `MdePkg/Include/Register/Intel/Msr/SkylakeMsr.h`, `MSR_SKYLAKE_*_PERF_LIMIT_REASONS`)
+`[DOC https://raw.githubusercontent.com/tianocore/edk2/master/MdePkg/Include/Register/Intel/Msr/SkylakeMsr.h]`. So **0x6B0 is the iGPU word, not "PKG"**;
+the `PKG_PERF_LIMIT_REASONS` label in `msrio.py` / `telemetry-sources.md` / the "Limit reasons (raw 0x6B0)" tile is wrong (not edited by G-215; orchestrator to rename).
+Linux's 0x690 is the Haswell-era address of the core word; it is EIO on this CPU `[MEASURED lnx 2026-09-29]` (telemetry-sources.md) — never read.
+turbostat decodes the Haswell 0x690/0x6B0/0x6B1 trio (`print_perf_limit()`, gated by `plr_msrs` per platform; the entries seen were Haswell-class, ARL not
+checked) and its core-word bit names differ from the Skylake 0x64F table — **do not** mix them.
+
+**Layout (both words).** Bits 15:0 = live status ("frequency is reduced below the OS request because ..."); bits 31:16 = log of the same condition,
+log bit = status bit + 16, set when the status asserted since last cleared, cleared by software writing 0 (R/W); bits 63:32 reserved. Decode reads only.
+
+| Status bit | 0x64F core (Skylake+ SDM) | 0x6B0 graphics (SDM) |
+|---|---|---|
+| 0 | PROCHOT (external) | PROCHOT |
+| 1 | Thermal event | Thermal |
+| 4 | Residency state regulation | reserved |
+| 5 | Running average thermal limit (RATL) | RATL |
+| 6 | VR thermal alert | VR thermal alert |
+| 7 | VR thermal design current (TDC) | VR TDC |
+| 8 | Other (electrical or other constraints) | Other |
+| 10 | Package/platform PL1 | PL1 |
+| 11 | Package/platform PL2/PL3 | PL2 |
+| 12 | Max turbo limit (multi-core turbo limits) | Inefficient operation |
+| 13 | Turbo transition attenuation | reserved |
+| 2, 3, 9, 14, 15 | reserved | 2, 3, 4, 9, 13, 14, 15 reserved |
+
+Evidence: every row above is `[DOC SDM Vol 4 via edk2 SkylakeMsr.h]` (URL above); log bits identical positions +16. 0x6B1 (ring) has the same set as
+0x6B0 without bit 12 — documented there, decoded by `limits.decode_ring_6b1` and in `TELEMETRY_MSRS` since G-229 (popover only).
+**Arrow Lake specifics are `[UNVERIFIED]`:** the SDM tables above are the Skylake-and-later generation; no ARL-specific SDM table was found. What is
+consistent on this CPU: `0x64F = 0x1DC21000` on CPUs 0,1,2,4,7,8,16 `[MEASURED lnx 2026-10-13 captures/lnx/perf-limit-reasons-20261013T155847Z.txt]` —
+identical on P and E CPUs (package scope), every set bit (12, 17, 22, 23, 24, 26, 27, 28) lands on a documented position, none on a reserved one.
+That proves scope and no-reserved-bits at that instant, not that the semantics are unchanged on ARL.
+**No public source names a PL4 / Pmax / EDP bit** (the SDM Meteor Lake table 2-53 matches this one exactly, with "9 Reserved" and "15:14 Reserved"; `[DOC SDM 335592-093, edk2]`). "Bit 8 = PL4 trip" is therefore a `[MEASURED lnx 2026-11-11]` correlation on this chip (throttling.md §G), not a definition; whether bit 8 is PL4-only or also IccMax is open (test: BIOS IccMax 300 A not unlimited, PL4 500 W, a vecwide load, 10 Hz 0x64F plus a guarded `0x16` read).
+
+**Not decoded in code (named only here).** `[COMMUNITY https://github.com/cyring/CoreFreq/discussions/333]` a user reports 64F bit 14 as Thermal Velocity
+Boost (via HWiNFO); the SDM calls bits 14–15 reserved → `[UNVERIFIED]`, reported by the decoder as `unknown_bits`. Haswell-era Intel-forum posts reading bit 14/15 as "max n-core turbo" concern the old 0x690 layout `[COMMUNITY https://community.intel.com/t5/Software-Tuning-Performance/MSR-CORE-PERF-LIMIT-REASONS-Set/m-p/1085194]`.
+CoreFreq notes bit 24 "Other" was "Electrical Design Point" on Haswell. **Interpretation:** a live `max_turbo_limit` (bit 12) means the multi-core turbo
+ratio limit is the cap — normal under load, not a fault. Log bits accumulate until cleared; this app never clears them.
+
+### Power limits — powercap files and MSRs 0x606 / 0x610 / 0x614 (G-214) `host lnx`, code `src/linux_xtu/controls/power.py`, ops `helper/ops_power.py`
+**Access.** Writes go to the powercap files only, never to MSR 0x610 (`PLAIN_MSR_WRITABLE` has no entry for it; a policy `write` entry for 0x606/0x610/0x614 is a load error). The three MSRs are
+read through the guard (`msr_allow` read entries, package-wide: read on the lowest CPU) to see the lock bit and to check what the kernel wrote.
+**Powercap mapping** `[MEASURED lnx 2026-10-18]`, zone `/sys/class/powercap/intel-rapl:0` (files root 0644): `constraint_0_name` = `long_term` = **PL1**: `constraint_0_power_limit_uw` 250000000,
+`constraint_0_time_window_us` 127926272 (= tau); `constraint_1_name` = `short_term` = **PL2**: `constraint_1_power_limit_uw` 295000000, `constraint_1_time_window_us` 2440 (not written by the app);
+no `constraint_2`; `constraint_0_max_power_uw` 125000000 = the TDP, **not** a ceiling for PL1 (the machine runs 250 W). The code checks the two names and refuses a zone that numbers them otherwise.
+**0x606 RAPL_POWER_UNIT** `[MEASURED lnx 2026-09-29]` 0.125 W (`[3:0]` = 3), energy 2^-14 J (`[12:8]`), time 2^-10 s (`[19:16]` = 10; reference-285k notes platform.md §4: "0.125 W, 2^-14 J, 2^-10 s").
+**0x610 PKG_POWER_LIMIT** layout `[DOC SDM Vol.4]` and `[MEASURED lnx 2026-10-08]` for the fields it decoded (`0x004287d000df87d0` = PL1 250 W, clamp, tau 56 s, PL2 250 W, lock 0):
+PL1 `[14:0]` (x 0.125 W), enable `[15]`, clamp `[16]`, tau `[23:17]` (`Y` = `[21:17]`, `Z` = `[23:22]`; window = 2^Y x (1 + Z/4) x time unit), PL2 `[46:32]`, enable `[47]`, clamp `[48]`,
+**lock `[63]`** (set = read-only until reset; `[DOC SDM]`, XTU's "PL lock = 0x610 b63" `[DECOMPILED mailbox-recon-summary.md]`). Bits `[62:49]` are not decoded.
+**Time window rounding.** The kernel converts with the integer time unit 1000000 / 1024 = **976 us** (`[MEASURED lnx 2026-10-18]`: 127926272 us = 2^17 x 976 us, i.e. Y = 17, Z = 0) and the field is
+`Y = floor(log2(window / unit))`, `Z = floor(4 x (window/unit - 2^Y) / 2^Y)` -- a request is rounded **down** to an encodable window `[DOC kernel intel_rapl_common.c, rapl_default_compute_time_window: y = ilog2(value / time_unit); f = 4 * (value - 2^y) / 2^y; the kernel saturates at y > 0x1f where this app refuses — fail closed]`
+(the write sitting H4 still confirms it by read-back). The plan therefore snaps the requested tau **down** to the encodable window, range-checks *that* value against `[power] tau_s`, shows it, and the read-back must equal it exactly (file, and the register's `[23:17]` decoded). If H4 shows the kernel rounds the other way, the apply trips on the read-back and this rule is revisited.
+**0x614 PKG_POWER_INFO**: thermal spec power `[14:0]` (125 W `[MEASURED lnx]` reference-285k notes platform.md §4), minimum `[30:16]`, maximum `[46:32]`, maximum window `[53:48]` -- layout `[DOC SDM]`,
+min / max fields `[UNVERIFIED]` on Arrow Lake. Shown for information; never a bound.
+**Runtime writes** `[MEASURED lnx 2026-10-08]` (platform-arl-s.md §12): PL1/PL2 powercap writes take effect while bit 63 is clear; a PL2 write changed only `0x610[46:32]`; a reboot restores the firmware value
+`[UNVERIFIED]`. Whether a write to a **locked** zone errors or is silently ignored is `[UNVERIFIED]` -- the app does not rely on either: it refuses to write when bit 63 is set or unreadable and checks the read-back.
+**Policy** (`[power]`, `guard/policy.py::PowerPolicy`): `pl1_w`, `pl2_w` (whole watts, 1..4095 = the 15-bit field), `tau_s` (seconds, <= 2^31 x 1.75 / 1024), each `[min, max]`, and `max_step_w`; all optional,
+**absent = refused, naming the key**; nothing is derived from the CPU. PL2 >= PL1 is enforced on the final pair, and the write order keeps it true after every single write.
+
+## MMIO
+MCHBAR 0x59A0 / 0x59A4 / 0x59B0 = PL1 / PL2 / PL4 (INT340X RAPL `ARL_S_THERMAL`, `processor_thermal_rapl.c`) `doc` — generic only: the kernel uses one shared `rapl_mmio_default` table (`0x5930, 0x59b0`, `MMIO_POWER_LIMIT4_MASK` GENMASK(12,0)), and Intel's ARL-S register document lists 59A0h / 5938h / 593Ch and **no 59B0h**. PL4 via this copy is **not enforced** on the reference chip [MEASURED lnx 2026-11-11, throttling.md §G] (the 0x601 MSR is). IPF DSP `decomp`: also 0x59A8/0x59AC (PP0/PP1), 0x5938/0x5930/0x593C; **base = mapped BAR of the processor-thermal PCI device**; PCU mailbox 0x5810/0x5814/0x5818 (not the OC mailbox); ref-clock 0x5F60/0x5F64. Per-core HWP request `0x774` `[15:8]`/`[23:16]` fields are used per CPU ·
+MCHBAR 0x5DA0 / 0x5DA4 = BIOS mailbox (0x37 core-ratio ext; SAGV B2P 0x22), *not* MSR 0x150 `doc` (FSP; Intel EDC 13th-gen datasheet).
+
+## BIOS/FSP gating flags (boot-time; decide whether runtime writes are honoured)
+`OcSupport` (default off) · `OcLock` (default 1) · `UnderVoltProtection` (default 1) · `TurboPowerLimitLock` · `PowerLimit3Lock` · `PowerLimit4Lock` · `TccOffsetLock` · `ConfigTdpLock` · `LockPTMregs` · `PmgCstCfgCtrlLock`.
+Runtime mailbox writes need OC Lock off and UVP off (`platform-arl-s.md` §1); read `0x194[20]` / `0x195[1]` rather than trusting the BIOS menu.
+
+**Linux measurements `measured lnx 2026-10-01`**: the `0x10` word persists over a warm reboot; `0x1C` answers on E CPUs and `[7:0]` follows a `0x1D` write; **`0x650` is runtime-writable and package-scoped** (written on CPU 0, read back identical on P and E CPUs); `0x1D` writes change the HWP highest performance the kernel sees (`energy_model` capacity rescaled). Values in notes §4.
+
+- **OC-point V target lands late** `[MEASURED lnx 2026-10-19 06:33Z, captures/lnx/p0-oc58-trip-20261019.txt]`: the first P-core OC point above the fused top
+  (cpu 0, SET 0x11 `0x0005b43a` = 58x, adaptive 1.4258 V) read back `0x0000003a` (ratio only, V target 0) within ~1 ms, so the guard tripped; a read ~1 h
+  later returned `0x0005b43a`. The ratio is immediate, the V target of a newly created OC point is applied asynchronously. Settle time `[UNVERIFIED]`. The guard re-reads up to 4 times (2/5/10/20 ms), G-237.
+
+- **Undervolt Protection (UVP) refuses negative offsets with rc 0x13** `[MEASURED lnx 2026-10-19 13:12Z]`: after a BIOS reset to defaults (+XMP only),
+  0x14 read `0x00000000` (PerCore Voltage Enable off — the earlier boots read `0x8`), the helper's 0x15 `old|8` write succeeded (read back `0x8`), then the
+  first per-point write `SET 0x11 P2=5 0xFEC00035` (P0 point 5 / 53x, offset −10 mV) answered **rc 0x13 UndervoltProtection**; nothing was written.
+  UVP is Intel's default (FSP `UnderVoltProtection` default 1, §BIOS knobs); the operator's earlier BIOS profile had it disabled. No read-only
+  detection of UVP is known: the 0x09 floor word read the same (`0x0005B439`, offset floor 0) with UVP off and on `[MEASURED]`. A refused offset leaves
+  0x14 = 8 (PerCore Voltage Enable stays on; harmless, it is what the next apply needs).

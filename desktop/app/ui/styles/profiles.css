@@ -1,0 +1,232 @@
+/* profiles.css: layout of the Profiles screen (desktop/DESIGN.md §9.9): full-width panels (V-20) — save row, accepted state, the library, then contents | compare.
+   Colours and sizes from tokens.css only; markup from kit.html (lx- components). */
+/* G-244 (QA-24): the screen fills the window height. The save row, the accepted state and the library take their own height; Contents | Compare take the rest and scroll inside
+   only when their content is longer. When the top panels leave less than the split's minimum, the body scrolls instead (the split never shrinks below it). */
+.lx-pr {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.lx-pr > * {
+  flex: 0 0 auto;
+}
+
+.lx-pr > .lx-pr-split {
+  flex: 1 1 0;
+}
+
+.lx-pr-split {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: var(--bw);
+  min-height: calc(var(--row) * 13);
+  background: var(--rule-strong);
+}
+
+@media (max-width: 1179px) {
+  .lx-pr-split {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-rows: minmax(calc(var(--row) * 10), auto);
+  }
+}
+
+/* the boot-restore line of the accepted state (QA-35) */
+.lx-pr-boot {
+  color: var(--warn);
+  font-size: var(--t-sm);
+}
+
+.lx-pr-boot[data-state="armed"] {
+  color: var(--fg3);
+}
+
+.lx-pr-boot code {
+  color: var(--fg);
+  user-select: all;
+}
+
+/* save row */
+.lx-pr-saverow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.lx-pr-lbl {
+  color: var(--fg2);
+}
+
+.lx-pr-name {
+  width: 28ch;
+}
+
+.lx-pr-note {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-pr-note[data-ok="false"] {
+  color: var(--fg2);
+}
+
+/* accepted state */
+#pr-accepted .lx-empty {
+  padding: 0;
+}
+
+.lx-pr-accline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--s2) var(--s4);
+}
+
+.lx-pr-sum {
+  color: var(--fg);
+}
+
+.lx-pr-hint {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-pr-pad {
+  margin: 0;
+  padding: var(--s3);
+}
+
+.lx-pr-win {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: var(--bw) solid var(--rule);
+  max-width: 96ch;
+}
+
+.lx-pr-win-h {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.lx-pr-steps {
+  margin: 0;
+  padding-left: var(--s5);
+  color: var(--fg2);
+}
+
+.lx-pr-cmd {
+  margin: 0;
+  padding: var(--s2) var(--s3);
+  color: var(--fg);
+  white-space: pre;
+  overflow-x: auto;
+  user-select: all;
+}
+
+.lx-pr-act {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s1);
+}
+
+.lx-pr-finger {
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+.lx-pr-finger[data-kind="ok"] {
+  color: var(--ok);
+}
+
+.lx-pr-finger[data-kind="warn"] {
+  color: var(--warn);
+}
+
+.lx-pr-finger[data-kind="fault"] {
+  color: var(--fault);
+}
+
+.lx-pr-ask,
+.lx-pr-notice {
+  margin-top: var(--s3);
+}
+
+.lx-pr-ask .lx-box p,
+.lx-pr-notice .lx-box p {
+  margin: 0 0 var(--s1);
+}
+
+.lx-pr-ask .lx-tbl {
+  margin: var(--s1) 0;
+}
+
+/* the library */
+.lx-pr-tags {
+  display: flex;
+  align-items: center;
+  gap: var(--s1);
+}
+
+.lx-pr-list td.lx-pr-tags {
+  display: table-cell;
+}
+
+.lx-pr-list td.lx-pr-tags .lx-tag + .lx-tag {
+  margin-left: var(--s1);
+}
+
+.lx-pr-absent {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+/* contents, section by section */
+.lx-pr-sec {
+  padding: var(--s2) var(--s3) var(--s3);
+  border-bottom: var(--bw) solid var(--rule);
+}
+
+.lx-pr-sec-h {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s3);
+  margin-bottom: var(--s1);
+}
+
+.lx-pr-sec .lx-tbl th,
+.lx-pr-sec .lx-tbl td {
+  padding: 0 var(--s2);
+}
+
+.lx-pr-sec .lx-tbl thead th {
+  position: static;
+}
+
+.lx-pr-pts {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lx-pr-kv dd.lx-mono {
+  overflow-wrap: anywhere;
+}
+
+.lx-pr-against {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+#pr-compare .lx-band-end .lx-select {
+  max-width: 24ch;
+}

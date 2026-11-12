@@ -1,0 +1,86 @@
+# Telemetry sources (SPEC §8) — one documented source per value
+
+Code: `src/linux_xtu/telemetry/`. Host: lnx. Scope: P = platform-specific (Arrow Lake-S, or the board named), G = generic Intel/Linux.
+Rule: only MEASURED / DECOMPILED / DOC facts are code constants; a missing or unreadable source yields `unavailable` + reason, never a number.
+Registers cite `registers.md` ("Measured on the reference machine"). Intel SDM = vol 3 (14.2 APERF/MPERF, 14.7 thermal) / vol 4 (MSR list).
+Measured values below are from the reference 285K / ASRock Z890 (`examples/reference-285k/notes/platform.md`).
+
+| Value | Source | Privilege | Package | Scope | Evidence |
+|---|---|---|---|---|---|
+| Effective MHz per core | `tsc_MHz * dAPERF/dMPERF`, MSR 0xE8 / 0xE7 (64-bit, wrap handled) | root (msr node) | linux | G | [DOC Intel SDM vol 3 14.2] |
+| Busy % per core | `100 * dMPERF / (tsc_MHz*1e6*dt)` | root | linux | G | [DOC SDM] |
+| TSC MHz | 100 MHz * MSR 0xCE `[15:8]` (285K: 37 -> 3700 MHz) | root | linux | P (ratio value) | [MEASURED lnx 2026-09-29]; bus 100 MHz [DOC] |
+| Requested VID + running ratio | MSR 0x198 `[47:32]`/8192 V; `[15:8]` ratio. A *request*, not delivered voltage | root | linux | P (decode confirmed on this CPU) | [MEASURED lnx 2026-09-29] |
+| Temps (primary) | hwmon `coretemp`: `temp*_input` m°C, labels "Package id N"/"Core N" (report only labels present) | none | linux | G | [DOC kernel hwmon/coretemp.rst]; ARL [MEASURED lnx 2026-10-11]: one "Core N" label per P and E core, N = sysfs `topology/core_id` (not the CPU number) |
+| Temps (fallback) | MSR 0x19C / 0x1B1: valid `[31]`, readout `[22:16]`; `Tjmax - readout`; Tjmax = 0x1A2 `[23:16]` (105) | root | linux | G | [DOC SDM vol 3 14.7]; 0x1A2 [MEASURED lnx 2026-09-29] |
+| Package power (primary) | powercap `intel-rapl:0/energy_uj` delta, wrap at `max_energy_range_uj` | root since 5.10 (PLATYPUS) | linux | G | [DOC powercap.rst]; privilege [DOC] |
+| Core power | powercap `intel-rapl:0:N` where `name == core` | root | linux | G (subdomain presence on ARL [UNVERIFIED]) | [DOC] |
+| Package power (fallback) | MSR 0x611 `[31:0]` x 2^-ESU J, ESU = 0x606 `[12:8]` (14) | root | linux | G | 0x611 [DOC SDM]; 0x606 units [MEASURED lnx 2026-09-29] |
+| Vcore | hwmon `nct6686` (kernel driver `nct6683`, ASRock NCT6686D), `in0` label **`VIN16`**, `in*_input` mV, 16 mV step = board VccIA/VCCCORE VR VOUT before the DLVRs (always above the highest VID). **Not** `in1`/`VIN0` (a CPU-0-activity-gated signal; never a metric, never Vcore). `in5`/`VIN6` = VccSA sense | none (sysfs) | linux | P (ASRock Z890 Steel Legend WiFi; other boards need their own row, keyed by DMI board name, D-036) | [MEASURED lnx 2026-10-11]: VIN16 tracks load above the max VID, VIN6 matches the BIOS VccSA setting; the Super-I/O labels are generic (`VINn`), no `Vcore` label exists |
+| Limit reasons (core) | MSR 0x64F decoded (`limits.decode_core_64f`): `[15:0]` status, `[31:16]` log; snapshot value `{raw,status,log,unknown_bits}` | root | linux | P (bit table is the Skylake+ SDM one; ARL semantics [UNVERIFIED]) | bit meanings [DOC SDM vol 4 via edk2 `SkylakeMsr.h`] (registers.md "Limit reasons"); word `0x1DC21000` [MEASURED lnx 2026-10-13] |
+| Limit reasons (graphics) | MSR 0x6B0 decoded (`limits.decode_graphics_6b0`), same layout. **0x6B0 is the iGPU word, not a package word** (Linux `MSR_GFX_PERF_LIMIT_REASONS`) | root | linux | P | [DOC SDM vol 4 / Linux msr-index.h] (registers.md "Limit reasons") |
+| Limit reasons (raw, compat) | MSR 0x6B0 raw word, undecoded -- kept as `limit_reasons_raw` for one release (previously mislabelled "package"); **no longer used by the desktop UI** (G-229) | root | linux | P | raw read [MEASURED lnx 2026-09-29] |
+| Limit reasons (ring) | MSR 0x6B1 decoded (`limits.decode_ring_6b1`): the 0x64F layout without bits 4/12/13; snapshot key `limit_reasons_ring` (popover only) | root | linux | P | [DOC SDM vol 4 via edk2 `SkylakeMsr.h`]; word never read yet [UNVERIFIED on ARL] (throttling.md F5) |
+| Package thermal status | MSR 0x1B1 once per tick, throttle bits only (`limits.decode_pkg_therm_1b1`): status 0/2/4/6/8/10, log = status+1, bit 13 "PMAX log" (IPF primitive, ARL [UNVERIFIED]); snapshot key `pkg_therm_status`. The kernel clears these log bits; the app never writes them | root | linux | P | [DOC edk2 ArchitecturalMsr.h; Linux therm_throt.c]; bit 13 [DECOMPILED ipf-primitives.tsv:303-304] |
+| Throttle indicators | MSR 0x64F **status bits** read on CPU 0 at ~10 Hz inside the sampler thread (one extra plain rdmsr per 100 ms); per 1 s tick the snapshot key `throttle` = `{samples, failed, window_s, or_word, groups{power,current,thermal,vr_thermal,max_turbo: {label, active, duty, bits}}, bit_duty, info_bits, unknown_bits, log}` (`telemetry/throttle.py`). Group mapping: Power limit = bits 10/11; Current / PL4 (electrical; was "Current / EDP", relabelled in G-244 after the 0x601 measurement, throttling.md §G) = 8/7; Thermal = 1/0/5; VR thermal = 6; Max turbo cap = 12 (informational, grey, never amber); 13/4 popover only | root | linux | P | oversampling design [throttling.md section C]; mapping is an inference from SDM names, XTU's own mapping not decompiled [UNVERIFIED]; **no MSR write, no log-bit clear anywhere** (the GUI's "Reset indicators" clears app counters only) |
+| Kernel thermal witness | sysfs `cpu*/thermal_throttle/{core,package}_throttle_{count,total_time_ms}`, diffed per tick; snapshot key `kernel_thermal`. Thermal only (power counters need `int_pln_enable`) | none | linux | G | [DOC therm_throt.c]; files present, all 0 [MEASURED lnx 2026-10-18 sysfs] |
+| DRAM read/write GB/s | ONE long-lived `perf stat -a -I 1000 -x , -e uncore_imc_free_running/data_read/,.../data_write/`; stderr merged; MiB x 1.048576/1000 / interval | root (or perf_event_paranoid <= -1) | perf (linux-tools) | P (IMC PMU) | unit/scale [MEASURED lnx 2026-10-03]; CSV layout [DOC perf-stat(1)]; event spelling `uncore_imc_free_running/data_read/` (merged over `_0`/`_1`) [MEASURED lnx 2026-10-11, root perf 6.x: ~1 GB/s read idle] |
+| GPU | nvidia-smi dmon — **not implemented in G-104** (optional, SPEC §8) | user | nvidia-utils | G | [MEASURED lnx 2026-10-03] |
+
+Design: reads go through `TelemetryMsr` (rdmsr only; refuses anything outside `TELEMETRY_MSRS`, incl. 0x150; no `wrmsr` attribute).
+The telemetry package imports nothing from mailbox/guard/msr.transport (AST test `tests/telemetry/test_isolation.py`). Sample thread 1 Hz default.
+Idle core (MPERF flat): MHz unavailable, busy 0. First sample of any delta reader: unavailable ("need two").
+Snapshot keys for the limit words: `limit_reasons` = decoded 0x64F (CPU 0), `limit_reasons_gfx` = decoded 0x6B0; each is a `Reading` whose
+`value` is the decoder dict `{raw,status,log,unknown_bits}`. `limit_reasons_raw` (raw 0x6B0 word) stays unchanged for one release.
+`Sampler(throttle_log=..., tuning_id_fn=..., limit_words=...)`: the sampler owns the event log `throttle.jsonl` (beside the audit log: dev `$XDG_STATE_HOME/linux-xtu/`
+D-041, installed `/var/lib/linux-xtu/` D-030; 0600, `O_NOFOLLOW`, one rotated generation at 1 MiB). An event per group (`power`/`current`/`thermal`/`vr_thermal`; max turbo is never
+logged) opens on the first 1 s window with the group active and closes after 2 clean windows; fields: `t_on`/`t_off` (wall), `mono_on`/`mono_off`, `dur_ms`, `bits`, `word`,
+`duty`, `peak_temp_c`/`peak_pkg_w`/`peak_mhz`, `kernel_thermal_delta`, `tuning_id`. Read op `throttle.tail {n}` (n 1..200, default 20) = `telemetry.throttle.tail()`.
+`limit_words` is the simulator knob (a `ScriptedWords` source, used only without an MSR port). `0x19C` per CPU is **not** sampled (no `detail` flag yet).
+
+## Telemetry read rows (applied: `TELEMETRY_MSRS`, D-026; mirrored in registers.md "Telemetry read allowlist")
+Read kind = RDMSR only, any CPU, no mailbox involvement.
+
+| MSR | Bits used | Kind | Evidence |
+|---|---|---|---|
+| 0xE7 MPERF | `[63:0]` | read | [DOC SDM vol 4] |
+| 0xE8 APERF | `[63:0]` | read | [DOC SDM vol 4] |
+| 0xCE PLATFORM_INFO (already) | `[15:8]` base ratio | read | [MEASURED lnx 2026-09-29] |
+| 0x198 PERF_STATUS (already) | `[47:32]` VID, `[15:8]` ratio | read | [MEASURED lnx 2026-09-29] |
+| 0x19C IA32_THERM_STATUS | `[31]` valid, `[22:16]` readout | read | [DOC SDM vol 4]; ARL behaviour [UNVERIFIED] until first read |
+| 0x1A2 TEMPERATURE_TARGET | `[23:16]` Tjmax | read | [MEASURED lnx 2026-09-29] `0x80691400` |
+| 0x1B1 IA32_PACKAGE_THERM_STATUS | `[31]` valid, `[22:16]` readout | read | [DOC SDM vol 4]; ARL [UNVERIFIED] |
+| 0x606 RAPL_POWER_UNIT | `[12:8]` ESU (`[3:0]` PU, `[19:16]` TU not used) | read | [MEASURED lnx 2026-09-29] |
+| 0x611 PKG_ENERGY_STATUS | `[31:0]` | read | [DOC SDM vol 4] |
+| 0x64F CORE_PERF_LIMIT_REASONS (SDM Skylake+ core word; Linux `msr-index.h` names 0x64F `MSR_PERF_LIMIT_REASONS`) | `[15:0]` status, `[31:16]` log; decoded by `limits.decode_core_64f` | read | bit table [DOC SDM vol 4 via edk2 `SkylakeMsr.h`]; word `0x1DC21000` on CPUs 0,1,2,4,7,8,16 [MEASURED lnx 2026-10-13] |
+| 0x6B0 GFX_PERF_LIMIT_REASONS (**graphics**, not package; SDM `MSR_GRAPHICS_PERF_LIMIT_REASONS`) | `[15:0]` status, `[31:16]` log; decoded by `limits.decode_graphics_6b0`, raw kept as `limit_reasons_raw` | read | [DOC SDM vol 4; Linux msr-index.h `MSR_GFX_PERF_LIMIT_REASONS`]; raw word [MEASURED lnx 2026-09-29]; 0x690 is EIO — never read |
+| 0x601 PKG_POWER_LIMIT_4 (PL4) | `[14:0]` x the 0x606 power unit (W), lock `[31]`; decoded by `cpu.decode_pl4`, snapshot key `pl4`. **Orchestrator decision (G-244): added to `TELEMETRY_MSRS` as a plain read-only rdmsr; NOT in `PLAIN_MSR_READABLE`.** Width question: see the PL4 row above | read | [MEASURED lnx 2026-11-11] `0xd48` = 425 W; layout [DOC SDM 335592-093 Table 2-58][DECOMPILED IPF] |
+| 0x6B1 RING_PERF_LIMIT_REASONS (SDM `MSR_RING_PERF_LIMIT_REASONS`, package scope) | `[15:0]` status, `[31:16]` log; decoded by `limits.decode_ring_6b1`. **Orchestrator decision (G-229): added to `TELEMETRY_MSRS` as a plain read-only rdmsr for the telemetry set only; NOT in `PLAIN_MSR_READABLE`** (the sets are separate) | read | [DOC SDM vol 4 via edk2 `SkylakeMsr.h`]; XTU lists it as RO [DECOMPILED win-xtu-native-provider.md:101]; ARL value [UNVERIFIED] |
+
+## Other sources (not sampled by the app)
+| Value | Source | Evidence |
+|---|---|---|
+| CPU type / cluster map | CPUID leaf 0x1A; sysfs `cpu_core` / `cpu_atom`, `cluster_cpus_list` (`platform-arl-s.md` §2) | [MEASURED lnx 2026-09-29] |
+| Favored cores | `acpi_cppc/highest_perf`, mailbox `0x1C` (`favored-cores.md` §2) | [MEASURED lnx 2026-09-29] |
+| Turbo tables, ring ratio, PL1/PL2 | MSR 0x1AD/0x1AE/0x650/0x651, 0x620/0x621, 0x610 + 0x606 (registers.md); powercap sysfs | [MEASURED lnx 2026-09-29] |
+| PL4 (peak power) | **sampled since G-244**: MSR 0x601 decoded `[14:0]` x the 0x606 power unit (0.125 W) = 425 W, snapshot key `pl4` = `{watts, locked, raw}` (`telemetry/cpu.py` `decode_pl4`, `read_pl4`; a zero field = unavailable); not a current, not IccMax (IccMax = mailbox cmd 0x16); the enforced copy — MMIO 0x59B0 is not (C-2 resolved). **Field width is open (B-11, `registers.md` MSR table):** `[12:0]` kernel/turbostat, `[14:0]` IPF, `[15:0]` SDM Series 2 (0 = disabled); identical below 1024 W | [MEASURED lnx 2026-11-11, throttling.md §G]; unit W [DOC SDM 335592-093 Table 2-58][DECOMPILED IPF `ipf-primitives.tsv:37,407`] |
+| Fabric clock (NGU/D2D candidate; **not sampled**) | `perf stat -e uncore_sncu/clockticks/` (48-bit fixed counter; MHz = delta / runtime), read from a sibling project: exactly 3200.0 MHz = 32 x 100 MHz BCLK with the BIOS NGU and D2D both at 32x, constant under load; which of NGU / D2D / a shared clock it is is **unproven** (`platform-arl-s.md` §11); `uncore_cncu/clockticks` moved with load and looks like the ring domain | [MEASURED lnx 2026-09-16/17, sibling project, not re-measured here]; identity [UNVERIFIED] |
+| Ring voltage request | MSR `0x621` (MSR_UNCORE_PERF_STATUS) [31:16] / 8192 V ("UncVID"; [6:0] = current ring ratio); `0x621` = `0x26EB0028` -> 40x 1.2162 V | [MEASURED lnx 2026-10-15]; field [COMMUNITY turbostat CoreVID/UncVID proposal, as used by siomon] |
+| DDR5 frequency / timings | MCHBAR, `memory-mchbar.md` | [DOC Intel 835538] |
+| GPU | `nvidia-smi dmon` (PCIe rx/tx, SM, power) | [MEASURED lnx 2026-10-03] |
+Settled negatives: no ARL-S PMT telemetry schema; no delivered (post-DLVR) voltage telemetry; no PL3. Tools contending for the Super-I/O (HWiNFO-style):
+one owner per controller.
+
+## Recorded `perf stat` output (root, lnx 2026-10-11, idle desktop) — parser fixture
+Units are MiB (x 1.048576 = MB) [MEASURED lnx 2026-10-03].
+`sudo perf stat -a -I 1000 -x , -e uncore_imc_free_running/data_read/,uncore_imc_free_running/data_write/ -- sleep 2.5` [MEASURED lnx 2026-10-11]:
+```
+1.001185302,1041.93,MiB,uncore_imc_free_running/data_read/,2002449195,100.00,,
+1.001185302,116.96,MiB,uncore_imc_free_running/data_write/,2002467557,100.00,,
+2.002374512,909.23,MiB,uncore_imc_free_running/data_read/,2002319269,100.00,,
+2.002374512,73.57,MiB,uncore_imc_free_running/data_write/,2002306047,100.00,,
+```
+One row per event per interval (instances `_0`/`_1` already summed by perf); `/sys/bus/event_source/devices/uncore_imc_free_running_{0,1}` exist.
+
+`[MEASURED lnx 2026-10-18]` live via the installed helper (G-223): 0x64F = 0x1DC20000 at idle → status none; sticky log thermal, vr_therm_alert,
+vr_tdc, other, pl1, pl2, max_turbo_limit (since boot; after restores/stress). 0x6B0 (graphics) = 0x01000000 → log other.

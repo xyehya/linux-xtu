@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "linux-xtu"
+version = "0.2.0-dev"
+description = "Linux XTU: per-core tuning for Intel Arrow Lake-S on Linux (stdlib only). Not affiliated with or endorsed by Intel. XTU is a trademark of Intel Corporation."
+requires-python = ">=3.12"
+dependencies = []
+license = "MIT"
+
+[project.scripts]
+linux-xtu = "linux_xtu.cli:main"
+linux-xtu-helper = "linux_xtu.helper.main:process_main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

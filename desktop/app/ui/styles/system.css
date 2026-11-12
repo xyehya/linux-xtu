@@ -1,0 +1,123 @@
+/* system.css: layout of the System screen (desktop/DESIGN.md §9.10): two columns of ruled panels, one below 1180 px. Colours and sizes from tokens.css only. */
+.lx-sys {
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  align-content: stretch;
+}
+
+.lx-sys-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--bw);
+  min-width: 0;
+}
+
+.lx-sys-col > .lx-panel {
+  overflow-x: auto;
+}
+
+.lx-sys-col > .lx-panel:last-child {
+  flex: 1 1 auto;
+}
+
+@media (max-width: 1179px) {
+  .lx-sys {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.lx-sys-pre-top {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  padding: var(--s3);
+  border-bottom: var(--bw) solid var(--rule);
+}
+
+.lx-sys-pre-box:empty {
+  display: none;
+}
+
+.lx-sys-facts .lx-kv {
+  grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr);
+}
+
+.lx-sys-glyph {
+  width: var(--s3);
+  font-family: var(--mono);
+  text-align: center;
+}
+
+.lx-sys .lx-tbl .lx-sys-glyph {
+  padding: 0 0 0 var(--s3);
+}
+
+.lx-sys-check {
+  color: var(--fg);
+}
+
+.lx-sys-detail,
+.lx-sys-src {
+  max-width: 0;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg2);
+}
+
+.lx-sys-src {
+  width: 40%;
+  white-space: normal;
+  overflow: visible;
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg3);
+}
+
+.lx-sys-why,
+.lx-sys-note {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-sys-note {
+  margin: var(--s2) 0 0;
+}
+
+.lx-sys-about {
+  margin: 0;
+}
+
+.lx-sys-settings dt {
+  align-self: center;
+}
+
+.lx-sys-settings {
+  row-gap: var(--s2);
+}
+
+.lx-sys-boot {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.lx-sys-boot-k {
+  color: var(--fg2);
+}
+
+/* the limits table wraps instead of scrolling: a limit not read says why in its cell */
+#sys-limits td {
+  height: auto;
+  min-height: var(--row);
+  padding-top: var(--s1);
+  padding-bottom: var(--s1);
+  white-space: normal;
+}
+
+#sys-limits td.lx-n {
+  max-width: 28ch;
+}
+
+#sys-limits td:nth-child(2) {
+  white-space: nowrap;
+}

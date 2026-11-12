@@ -1,0 +1,207 @@
+/* Curves (desktop/DESIGN.md §9.7): layout and the channel ramps of the V/F plot. Left: Measure (unit table + resolution, name, Measure);
+   right: Chart | Table | Library. Twelve curves share a plot: P-cores on the --ch-p ramp, E-clusters on --ch-e, each named at its line end. */
+
+.lx-cv {
+  grid-template-columns: 18.75rem minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  height: 100%;
+}
+
+/* the unit list scrolls inside the Measure panel so Measure stays in view at the 960×600 minimum */
+#cv-measure > .lx-panel-b {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.lx-cv-units {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+.lx-cv-main > .lx-panel > .lx-panel-b {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
+
+@media (max-width: 1179px) {
+  .lx-cv {
+    grid-template-columns: 18rem minmax(0, 1fr);
+  }
+}
+
+.lx-cv-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--n1);
+}
+
+.lx-cv-main > .lx-panel {
+  flex: 1 1 auto;
+}
+
+.lx-cv-main > .lx-panel[hidden] {
+  display: none;
+}
+
+.lx-cv-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+  padding: var(--s3);
+  border-top: var(--bw) solid var(--rule);
+}
+
+.lx-cv-fields {
+  display: grid;
+  grid-template-columns: 5rem minmax(0, 1fr);
+  row-gap: var(--s2);
+  align-items: center;
+}
+
+.lx-cv-row {
+  display: contents;
+}
+
+.lx-cv-ctl {
+  display: flex;
+  min-width: 0;
+}
+
+.lx-cv-ctl .lx-text {
+  width: 100%;
+}
+
+.lx-cv-go {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+}
+
+.lx-cv-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s1);
+}
+
+.lx-cv-run[hidden] {
+  display: none;
+}
+
+.lx-cv-progress {
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+.lx-cv-status {
+  margin: 0;
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+.lx-cv-status:empty {
+  display: none;
+}
+
+.lx-cv-lines {
+  margin: 0;
+  padding-left: var(--s4);
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+.lx-cv-lines[hidden] {
+  display: none;
+}
+
+.lx-cv-quick {
+  display: inline-flex;
+}
+
+/* chart tools: curve · tags … compare · Volts|Δ mV · spread */
+.lx-cv-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+}
+
+.lx-cv-tools .lx-select {
+  max-width: 44ch;
+}
+
+#cv-compare {
+  max-width: 28ch;
+}
+
+.lx-cv-tags {
+  display: inline-flex;
+  gap: var(--s1);
+}
+
+.lx-cv-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  color: var(--fg2);
+}
+
+.lx-cv-empty[hidden] {
+  display: none;
+}
+
+.lx-cv-dia {
+  color: var(--fg);
+  font-size: var(--t-sm);
+}
+
+.lx-cv-act {
+  width: 1%;
+}
+
+.lx-cv-actbox {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0 var(--s1);
+  min-width: 12.5rem;
+}
+
+#cv-lib tr[data-current="true"] td:first-child {
+  box-shadow: inset 2px 0 0 var(--fg);
+}
+
+/* channel ramps (plots only): the trace and its direct label share the unit's step */
+.lx-plot .lx-cv-c-p0 { stroke: var(--ch-p-0); }
+.lx-plot .lx-cv-c-p1 { stroke: var(--ch-p-1); }
+.lx-plot .lx-cv-c-p2 { stroke: var(--ch-p-2); }
+.lx-plot .lx-cv-c-p3 { stroke: var(--ch-p-3); }
+.lx-plot .lx-cv-c-p4 { stroke: var(--ch-p-4); }
+.lx-plot .lx-cv-c-p5 { stroke: var(--ch-p-5); }
+.lx-plot .lx-cv-c-p6 { stroke: var(--ch-p-6); }
+.lx-plot .lx-cv-c-p7 { stroke: var(--ch-p-7); }
+.lx-plot .lx-cv-c-e0 { stroke: var(--ch-e-0); }
+.lx-plot .lx-cv-c-e1 { stroke: var(--ch-e-1); }
+.lx-plot .lx-cv-c-e2 { stroke: var(--ch-e-2); }
+.lx-plot .lx-cv-c-e3 { stroke: var(--ch-e-3); }
+.lx-plot .lx-lbl-t--p0 { fill: var(--ch-p-0); }
+.lx-plot .lx-lbl-t--p1 { fill: var(--ch-p-1); }
+.lx-plot .lx-lbl-t--p2 { fill: var(--ch-p-2); }
+.lx-plot .lx-lbl-t--p3 { fill: var(--ch-p-3); }
+.lx-plot .lx-lbl-t--p4 { fill: var(--ch-p-4); }
+.lx-plot .lx-lbl-t--p5 { fill: var(--ch-p-5); }
+.lx-plot .lx-lbl-t--p6 { fill: var(--ch-p-6); }
+.lx-plot .lx-lbl-t--p7 { fill: var(--ch-p-7); }
+.lx-plot .lx-lbl-t--e0 { fill: var(--ch-e-0); }
+.lx-plot .lx-lbl-t--e1 { fill: var(--ch-e-1); }
+.lx-plot .lx-lbl-t--e2 { fill: var(--ch-e-2); }
+.lx-plot .lx-lbl-t--e3 { fill: var(--ch-e-3); }
+
+.lx-legend .lx-cv-mk-base {
+  border-color: var(--base);
+}

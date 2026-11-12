@@ -1,0 +1,189 @@
+/* Tune › Frequency, Power, Ring & uncore (R-S2; desktop/DESIGN.md §9.3–§9.5). Layout only: every look comes from the shared lx- components and
+   tokens.css. Prefixes: lx-freq- (Frequency), lx-pwr- (Power), lx-unc- (Ring & uncore), lx-rt- (shared). Linked by index.html. */
+
+.lx-rt-host > .lx-tiles {
+  min-height: 0;
+  border-bottom: var(--bw) solid var(--rule-strong);
+}
+
+/* shared: the restore button and its why line in a band end */
+.lx-rt-restore {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.lx-rt-restore > .lx-why--inline {
+  margin-top: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lx-rt-foot {
+  padding: 0 var(--s3) var(--s2);
+}
+
+.lx-rt-foot:empty {
+  display: none;
+}
+
+.lx-rt-none {
+  padding: var(--s4) var(--s3);
+}
+
+/* the "?" next to a label in a table cell */
+.lx-tbl td .lx-q {
+  margin-left: var(--s2);
+}
+
+/* ---------------------------------------------------------------- Frequency */
+.lx-freq {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: auto auto;
+}
+
+.lx-freq-limits {
+  grid-column: 1 / -1;
+}
+
+.lx-freq-binds {
+  color: var(--fg2);
+}
+
+.lx-freq-tbl {
+  overflow-x: auto;
+}
+
+.lx-freq-buckets th,
+.lx-freq-buckets td {
+  padding: 0 var(--s1);
+}
+
+.lx-freq-buckets th.lx-k {
+  padding-left: 0;
+  padding-right: var(--s2);
+  color: var(--fg3);
+  font-weight: var(--w-reg);
+  font-size: var(--t-sm);
+}
+
+.lx-freq-buckets thead th {
+  font-family: var(--mono);
+  text-align: right;
+  padding-right: var(--s2);
+}
+
+.lx-freq-whys {
+  min-height: 0;
+}
+
+.lx-freq-tools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s2);
+  margin-top: var(--s2);
+}
+
+.lx-freq-gap {
+  flex: 1 1 auto;
+}
+
+.lx-freq-turbo .lx-plot {
+  margin-top: var(--s2);
+}
+
+/* ---------------------------------------------------------------- Power (grid: .lx-split-side) */
+.lx-pwr-live .lx-panel-b {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+}
+
+.lx-pwr-now {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.lx-pwr-now-v {
+  font-family: var(--mono);
+  font-size: var(--t-xl);
+  line-height: var(--lh-xl);
+  font-weight: var(--w-med);
+  color: var(--fg);
+}
+
+.lx-pwr-now-u {
+  font-family: var(--mono);
+  color: var(--fg3);
+}
+
+.lx-pwr-ro {
+  color: var(--fg3);
+  font-size: var(--t-sm);
+}
+
+/* ---------------------------------------------------------------- Ring & uncore (grid: .lx-split-side) */
+.lx-unc .lx-box {
+  margin: var(--s3);
+}
+
+/* a unit beside a number in a table cell (W, s, ×): grey mono neighbour */
+.lx-rt-u {
+  margin-left: var(--s1);
+  font-family: var(--mono);
+  color: var(--fg3);
+}
+
+.lx-pwr-line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.lx-unc-vf {
+  display: flex;
+  align-items: center;
+  gap: var(--s2);
+  margin-top: var(--s3);
+  padding-top: var(--s3);
+  border-top: var(--bw) solid var(--rule);
+}
+
+/* the limit tables scroll inside their panel rather than run under the side panel (960 × 600) */
+.lx-pwr > .lx-panel > .lx-panel-b,
+.lx-unc > .lx-panel > .lx-panel-b,
+.lx-freq-limits > .lx-panel-b {
+  overflow-x: auto;
+}
+
+@media (max-width: 1179px) {
+  .lx-pwr,
+  .lx-unc {
+    grid-template-columns: minmax(0, 1fr) 16.5rem;
+  }
+}
+
+/* below 1180 px the two turbo tables stack: eight bucket fields need the full width */
+@media (max-width: 1179px) {
+  .lx-freq {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* in these bands the short meta keeps its width; a long reason beside the restore button is the part that truncates */
+.lx-rt-host .lx-band-m {
+  flex: 0 0 auto;
+}
+
+.lx-rt-host .lx-band-end {
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* QA-24: the tiles of a module tab grow with the body (the panel and part that hold them are laid out in tune.css). */
+.lx-rt-host > .lx-tiles {
+  flex: 1 1 auto;
+}

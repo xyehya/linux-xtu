@@ -1,0 +1,215 @@
+# policies/default.toml -- the shipped ROOT POLICY (D-049: CPU-enforced limits only; D-036: generic, derived live from the CPU).
+# install.sh seeds /etc/linux-xtu/policy.toml from this file ONLY when that file is absent (--reseed-config replaces an existing one). It names no
+# machine: the CPU set is "auto" and every limit that depends on the CPU is read from the CPU in the session.
+#
+# THERE ARE NO OPERATOR VALUE LIMITS HERE (D-049). The program refuses a value only when the CPU / the kernel itself cannot take it, read live in the session
+# (nothing read = nothing may be raised, CPU_LIMIT_UNREAD names the read):
+#   ratio        cmd 0x01 [7:0] fused max OC ratio of the core kind (P read on a P CPU, E on an E CPU, ring with P1 = 2)
+#   voltage      cmd 0x28 [11:0] - 1 LSB (XTU's rule; field 0 = 2.0 V) of the domain; the predicted voltage (V target or fused voltage + a positive offset) may not exceed it
+#   offset       the 11-bit field: -1024 .. +1023 raw = -1000 .. +999 mV
+#   power        MSR 0x610: the lock bit 63 (a locked limit is not written) and the 15-bit PL fields in the units of MSR 0x606
+#   caps         cpufreq cpuinfo_min_freq .. cpuinfo_max_freq, and not below scaling_min_freq
+#   uncore       intel_uncore_frequency initial_min_freq_khz .. initial_max_freq_khz, min <= max
+# A large single change, a positive or deep whole-curve offset, a non-monotonic or raised turbo table, PL2 below PL1 are WARNINGS of the Review, never refusals.
+# Older policy files may still carry max_ratio_step, max_v_step_mv, max_offset_step_mv, offset_ceiling_mv, effective_offset_floor_mv, assumed_bios_offset_mv, [ratio_max],
+# [v_target_max_mv], [power] and [runtime]: they still load, are IGNORED, and one warning line names them. Remove them.
+#
+# What is KEPT (safety mechanisms, not limits): one mailbox transaction at a time (2026-08-26 incident: sweeps, not budgets), the allowlist below
+# (default deny), the health gate, the audit log, the plan-bound nonce of tune.apply, the read-back of every write (a mismatch trips the guard).
+# Static/override voltage stays out (D-016: mode must be adaptive).
+# Defaults in this file:
+#   CPUs         "auto": the P and E CPUs of the live topology (P = devices/cpu_core, E = devices/cpu_atom)
+#   op caps      indicators only: 100000 per session and per boot; no dwell between operations
+
+cpus = "auto"
+e_cpus = "auto"
+max_operations_per_session = 100000
+max_operations_per_boot = 100000
+min_dwell_s = 0.0
+
+
+# --- allowlist (a policy file replaces the whole policy, so it lists every request) ---
+[[allow]]
+name = "oc_capability_read"
+cmd = 0x01
+p1 = [0, 1, 2, 3, 4, 5, 6, 7]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "per_core_capability_read"
+cmd = 0x02
+p1 = [0, 1, 2, 3, 4, 5, 6, 7]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "voltage_floor_read"
+cmd = 0x09
+p1 = [0x11]
+p2 = [0, 2, 7]
+kind = "read"
+
+[[allow]]
+name = "favored_core_read"
+cmd = 0x1C
+p1 = [0]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "granular_ratio_read"
+cmd = 0x26
+p1 = [0]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "max_voltage_limit_read"
+cmd = 0x28
+p1 = [0, 2, 7]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "misc_global_config_read"
+cmd = 0x14
+p1 = [0]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "voltage_freq_read"
+cmd = 0x10
+p1 = [0, 2, 7]
+p2 = [0]
+kind = "read"
+
+[[allow]]
+name = "vf_point_read"  # per-V/F-point word (E points 1..6, P points 1..8, one more when an OC ratio above the top point adds one); vf.dump walks to rc 0x11
+cmd = 0x10
+p1 = [0]
+p2 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+kind = "read"
+
+[[allow]]
+name = "misc_global_config_write"
+cmd = 0x15
+p1 = [0]
+p2 = [0]
+kind = "write"
+check = "percore_enable_only"
+
+[[allow]]
+name = "voltage_freq_write"  # the OC-ratio point (P2 = 0): ratio, adaptive V target, whole-curve offset
+cmd = 0x11
+p1 = [0]
+p2 = [0]
+kind = "write"
+check = "vf_bounded"
+
+[[allow]]
+name = "favored_core_write"
+cmd = 0x1D
+p1 = [0]
+p2 = [0]
+kind = "write"
+check = "favored_ratio_follows_vf"
+
+[[allow]]
+name = "granular_ratio_write"
+cmd = 0x27
+p1 = [0]
+p2 = [0]
+kind = "write"
+check = "granular_equals_read"
+
+[[allow]]
+name = "vf_point_write"  # per-point offsets: P points 1..8, E points 1..6 (tune.apply never writes a point beyond the table that was read)
+cmd = 0x11
+p1 = [0]
+p2 = [1, 2, 3, 4, 5, 6, 7, 8]
+kind = "write"
+check = "vf_point_offset_bounded"
+
+[[allow]]
+name = "ring_point_read"   # ring (domain P1=2) V/F point words, read-only: 8 fused points + the 40x slot the BIOS ring OC ratio creates (P2 9); P2 10 answers rc 0x11 (the end of the table)
+cmd = 0x10
+p1 = [2]
+p2 = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+kind = "read"
+
+[[allow]]
+name = "ring_point_write"   # T-028 / G-154 (D-045): ring (P1 2) V/F point offsets P2 1..9 (the 8 fused points + the OC-created 40x slot, operator yes 2026-10-15): the CLI point-offset, the accepted-state restore and tune.apply
+cmd = 0x11                  # (the ring OC word, P2 = 0, is BIOS-owned and has no write entry: it is read and compared, never written)
+p1 = [2]
+p2 = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+kind = "write"
+check = "vf_point_offset_bounded"
+
+# --- plain-MSR access (T-023, D-017): the turbo ratio tables. Writes: 0x650 (E) and 0x1AD (P) on CPU 0 only, under turbo_ratio_bounded
+# (every byte non-zero and at most the CPU's own ratio limit cmd 0x01 of its kind; a raise needs that limit read this session). ---
+[[msr_allow]]
+name = "msr_0xce_read"
+msr = 0xCE
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x650_read"
+msr = 0x650
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x1ad_read"
+msr = 0x1AD
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x1ae_read"   # G-114: P bucket core counts (tune.read turbo.P.counts); read-only by policy
+msr = 0x1AE
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x651_read"   # G-114: E bucket core counts (tune.read turbo.E.counts); read-only by policy
+msr = 0x651
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x650_write"
+msr = 0x650
+kind = "write"
+cpus = [0]                       # the CPU XTU writes it on
+check = "turbo_ratio_bounded"
+
+[[msr_allow]]
+name = "msr_0x1ad_write"
+msr = 0x1AD
+kind = "write"
+cpus = [0]
+check = "turbo_ratio_bounded"
+
+[[msr_allow]]
+name = "msr_0x198_read"   # vf measurement: running ratio + requested VID
+msr = 0x198
+kind = "read"
+
+# --- package power limits (G-214): read-only MSRs. 0x606 units, 0x610 PKG_POWER_LIMIT (lock bit 63: set = the limits cannot be changed), 0x614 PKG_POWER_INFO. Never written (no write entry
+# can exist for them): PL1 / PL2 / tau are written through the powercap files only. ---
+[[msr_allow]]
+name = "msr_0x606_read"
+msr = 0x606
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x610_read"
+msr = 0x610
+kind = "read"
+
+[[msr_allow]]
+name = "msr_0x614_read"
+msr = 0x614
+kind = "read"
+
+# --- package power limits and runtime controls (G-214, G-216; D-049): no keys. PL1 / PL2 / tau go through the powercap files and are refused only for a set lock bit (MSR 0x610 bit 63)
+# or a value the register cannot hold; per-CPU caps and the uncore limits are bounded by the kernel's own files (cpuinfo_min/max_freq, initial_min/max_freq_khz). A revert to the values
+# this boot started with (power.plan / runtime.plan {revert: true}) restores the recorded state. ---

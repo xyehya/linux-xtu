@@ -1,0 +1,276 @@
+/* Base layer (desktop/DESIGN.md §3.3, §3.9): vendored fonts, reset, typography, mono numerics, focus ring, scrollbars, selection.
+   Fonts: IBM Plex Sans 400/500/600 + IBM Plex Mono 400/500, SIL OFL 1.1 (../fonts/OFL.txt, provenance in ../fonts/SOURCE.txt).
+   Same-origin files: the shipped CSP (default-src 'self') allows them without a font-src entry. */
+
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../fonts/IBMPlexSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../fonts/IBMPlexSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "IBM Plex Sans";
+  src: url("../fonts/IBMPlexSans-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("../fonts/IBMPlexMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  src: url("../fonts/IBMPlexMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: block;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+}
+
+/* QA-03: every size is a rem token (tokens.css), so the whole UI scales with the root size. 100% = the 1280x800 design; larger windows step up so type
+   and controls stay the same share of the screen (1920x1080 = 112.5%, 2560x1440 = 125%, 4K = 150%+). Both dimensions must be large: a wide, short
+   window keeps the base size. */
+html {
+  font-size: 100%;
+}
+
+@media (min-width: 1700px) and (min-height: 900px) {
+  html {
+    font-size: 112.5%;
+  }
+}
+
+@media (min-width: 2200px) and (min-height: 1250px) {
+  html {
+    font-size: 125%;
+  }
+}
+
+@media (min-width: 3000px) and (min-height: 1700px) {
+  html {
+    font-size: 150%;
+  }
+}
+
+@media (min-width: 3800px) and (min-height: 2100px) {
+  html {
+    font-size: 187.5%;
+  }
+}
+
+body {
+  background: var(--n0);
+  color: var(--fg);
+  font-family: var(--sans);
+  font-size: var(--t-md);
+  line-height: var(--lh-md);
+  font-weight: var(--w-reg);
+  font-variant-numeric: tabular-nums;
+  font-kerning: normal;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none; /* G-234: Ctrl+A outside a field must not tint the whole page; text is selectable only where it is data (below) */
+}
+
+/* Selectable: fields (set explicitly, WebKitGTK lets an ancestor's none reach inputs), code / log text. Tables are chrome (QA-07: Ctrl+A tinted every
+   V/F and unit table); a screen's own copyable text (read-back values, audit records, why lines, Tips, toasts, plan warnings) says so in the
+   stylesheet that owns its class. */
+input,
+textarea,
+[contenteditable="true"],
+pre,
+code,
+samp,
+[role="log"] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+::selection {
+  background: var(--selection);
+}
+
+/* bare headings: a base size; screens size their headings by class (.lx-head-t, .lx-ihead-t, …) */
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: var(--w-semi);
+  letter-spacing: 0;
+}
+
+h1 {
+  font-size: var(--t-xl);
+  line-height: var(--lh-xl);
+}
+
+h2 {
+  font-size: var(--t-lg);
+  line-height: var(--lh-lg);
+}
+
+p {
+  margin: 0 0 var(--s2);
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  letter-spacing: inherit;
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 1rem;
+  padding: 0 0.25rem;
+  border: var(--bw) solid var(--rule-strong);
+  border-radius: var(--r1);
+  color: var(--fg3);
+  background: var(--n1);
+  line-height: 1rem;
+  text-align: center;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* ---- numerics and value grammar (DESIGN.md §2, §3.1) ---- */
+.lx-mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.lx-unit {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
+  color: var(--fg3);
+}
+
+.lx-caps {
+  font-size: var(--t-xs);
+  line-height: var(--lh-xs);
+  font-weight: var(--w-semi);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+}
+
+[data-v="meas"] {
+  color: var(--meas);
+}
+
+[data-v="base"] {
+  color: var(--base);
+}
+
+[data-v="set"] {
+  color: var(--set);
+}
+
+[data-v="none"] {
+  color: var(--fg3);
+}
+
+.lx-dim {
+  color: var(--fg3);
+}
+
+.lx-spacer {
+  flex: 1 1 auto;
+}
+
+.lx-vh {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---- focus: one ring everywhere, 2 px, never removed without a replacement ---- */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 1px;
+}
+
+/* ---- scrollbars: thin, neutral, visible only as a quiet bar ---- */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--n3) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 0.5rem;
+  height: 0.5rem;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--n3);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 0;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--rule-strong);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+/* Hints: quiet (DESIGN.md §6.7) — set on <html data-hints="quiet">; the context line and teaching paragraphs step back, refusals never do. */
