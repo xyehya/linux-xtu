@@ -124,6 +124,16 @@
 }
 
 /* chart tools: curve · tags … compare · Volts|Δ mV · spread */
+.lx-cv-noterow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s2);
+}
+
+.lx-cv-noterow .lx-tfoot-note {
+  flex: 0 1 auto;
+}
+
 .lx-cv-tools {
   display: flex;
   align-items: center;

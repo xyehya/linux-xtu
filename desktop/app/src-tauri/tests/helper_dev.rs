@@ -354,7 +354,7 @@ fn the_webview_cannot_write_without_the_operators_click_in_the_native_dialog() {
     assert_eq!(asked.len(), 3, "Cancel, the accept, Apply; the storm and the stranger plan showed none");
     assert_eq!(asked[1].primary(), "Set profile “mine” as the accepted state?");
     assert_eq!((asked[2].primary().as_str(), asked[2].ok_label().as_str()), ("Apply 1 write to the CPU?", "Apply 1 write"));
-    assert!(asked[2].secondary().contains("   P0 · point 5 · 53× · offset 0 → −19.5 mV\n"), "the value, not just the unit: {}", asked[2].secondary());
+    assert!(asked[2].secondary().contains("• P0 · point 5 · 53× · offset 0 → −19.5 mV\n"), "the value, not just the unit: {}", asked[2].secondary());
     assert_eq!(yes["result"]["dialog"]["secondary"], asked[2].secondary());
     let sent = st.call("tune.apply", &json!({"plan_id": plan_id, "intent": {"scope": "unit", "rows": []}}), Connect::Never);
     assert_eq!((sent["ok"].as_bool(), sent["pending"].as_bool()), (Some(true), Some(true)), "{sent}");

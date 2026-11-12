@@ -1,7 +1,8 @@
 // views/dashboard.js: the Overview screen (desktop/DESIGN.md §9.1; route id stays "dashboard"). Panels in reading order: UNITS · LIVE (the unit table with
 // live Clock / Busy (bar-in-cell) / VID / Temp columns and the factory top ratio), HISTORY (four small multiples on the plot core — package power,
 // highest clock, hottest sensor, Vcore — one time axis, one cursor, direct labels), LIMITS NOW (each throttle legend in plain words and where to change
-// it) with the recent THROTTLE EVENTS, STATE (accepted state, last read, last quick screen, mailbox requests as one quiet line) and MEMORY.
+// it) with the recent THROTTLE EVENTS (identical consecutive ones collapsed to one line, G-252) and MEMORY. The last quick screen is one footer line under the units (G-252:
+// the accepted state, last read, Undervolt Protection and mailbox requests are in the top bar and are not repeated here).
 // The six live values live only in the readout bar (V-05): nothing here repeats them as tiles. No donut (V-22), no tinted heat tiles (V-06).
 // Every reading that is unavailable shows "n/a" and its reason ONCE (a table footnote or a band meta), never 0 and never a guess. Reads only:
 // telemetry and throttle.tail are not mailbox traffic; mem.read runs only on its button.
@@ -21,6 +22,7 @@ import { LIMIT_ANNS, limitAnnModel, eventModel, visibleEvents, createLimits, EVE
 import { setText } from "../components/help.js";
 import { EMPTY } from "../lib/hints.js";
 import { powerCurrent } from "../lib/rtstate.js";
+import { stockMaxOf } from "../lib/units.js";
 import { MINUS } from "../lib/format.js";
 import { stressController, screenText, fmtLen, fmtDate } from "./stress.js";
 
@@ -66,11 +68,11 @@ export function readingValue(r) {
   return { value: null, reason: isObj(r) && typeof r.reason === "string" && r.reason ? r.reason : "no reading", source: isObj(r) && r.source ? r.source : "" };
 }
 
-/** One unit's live values from its CPUs: clock and busy = mean, VID and temperature = highest. {mhz, busy, vid, temp, why: {metric: reason}}. */
+/** One unit's live values from its CPUs: busy = mean; clock, VID and temperature = highest (G-252: the clock is the unit's fastest CPU, as on Tune). {mhz, busy, vid, temp, why: {metric: reason}}. */
 export function unitLive(values, cpus) {
   const out = { mhz: null, busy: null, vid: null, temp: null, why: {} };
   const list = Array.isArray(cpus) ? cpus : [];
-  for (const [m, agg] of [["mhz", "mean"], ["busy", "mean"], ["vid", "max"], ["temp", "max"]]) {
+  for (const [m, agg] of [["mhz", "max"], ["busy", "mean"], ["vid", "max"], ["temp", "max"]]) {
     const rs = list.map((c) => readingValue(coreReading(values, c, m)));
     const vs = rs.map((r) => r.value).filter(isNum);
     if (vs.length) out[m] = agg === "mean" ? vs.reduce((a, b) => a + b, 0) / vs.length : Math.max(...vs);
@@ -79,12 +81,24 @@ export function unitLive(values, cpus) {
   return out;
 }
 
-/** The Overview's unit rows: topology units (D-036: never a made-up layout) with the factory top ratio and the live values. */
-export function overviewRows(topology, values) {
+/**
+ * G-252: the core's own top ratio: its OC ratio when one is set, else the fused max ratio (a P-core's own favored ratio capped at the fused top; an E-cluster's fused top), from the
+ * kept Tune read (`mu` = lib/units model unit). Without that read the kernel's max ratio of the topology (`topMax`) stands in; null = nothing known.
+ */
+export function unitTop(mu, topMax = null) {
+  if (mu && mu.oc && isNum(mu.oc.ratio) && mu.oc.ratio > 0) return { ratio: mu.oc.ratio, oc: true };
+  const sm = mu ? stockMaxOf(mu) : null;
+  if (isNum(sm)) return { ratio: sm, oc: false };
+  return isNum(topMax) ? { ratio: topMax, oc: false } : null;
+}
+
+/** The Overview's unit rows: topology units (D-036: never a made-up layout) with each unit's own top ratio (`model` = the Tune read's units model, optional) and the live values. */
+export function overviewRows(topology, values, model = null) {
   const byId = new Map((topology && Array.isArray(topology.units) ? topology.units : []).filter(isObj).map((u) => [u.id, u]));
   return unitsFromTopology(topology).map((u) => {
     const t = byId.get(u.id) || {};
-    return { ...u, top: isNum(t.max_ratio) ? t.max_ratio : null, maxKhz: isNum(t.max_khz) ? t.max_khz : null, live: unitLive(values, u.cpus) };
+    const top = unitTop(model && model.units ? model.units[u.id] : null, isNum(t.max_ratio) ? t.max_ratio : null);
+    return { ...u, top: top ? top.ratio : null, topOc: top ? top.oc : false, maxKhz: isNum(t.max_khz) ? t.max_khz : null, live: unitLive(values, u.cpus) };
   });
 }
 
@@ -247,6 +261,42 @@ export function limitsNowRows(throttle, { connected = true, power = null, pkg = 
   });
 }
 
+/**
+ * G-252: the events list, newest first, with runs of the same kind of event (the same description) collapsed to one line: "Power limit held the clock · ×5 · 11:01–14:10 · peak 114 W, 70 °C (max)".
+ * A single event keeps its full line (eventLine). -> [{key, when, text, bad, n}]; a collapsed line has no `when` of its own (its span is in the text).
+ */
+export function eventLines(list) {
+  const out = [];
+  let run = [];
+  const flush = () => {
+    if (!run.length) return;
+    if (run.length === 1) out.push({ ...eventLine(run[0].r), n: 1 });
+    else {
+      const ts = run.map((x) => x.r.t_on).filter(isNum);
+      const first = ts.length ? fmtClock(Math.min(...ts)) : NA;
+      const last = ts.length ? fmtClock(Math.max(...ts)) : NA;
+      const maxOf = (k) => { const v = run.map((x) => x.r[k]).filter(isNum); return v.length ? Math.max(...v) : null; };
+      const w = maxOf("peak_pkg_w");
+      const c = maxOf("peak_temp_c");
+      const peaks = [w === null ? "" : `${w.toFixed(0)} W`, c === null ? "" : `${c.toFixed(0)} °C`].filter(Boolean).join(", ");
+      out.push({ key: run[0].m.key, when: "", text: [`${run[0].m.group} held the clock`, `×${run.length}`, first === last ? first : `${first}–${last}`, peaks ? `peak ${peaks} (max)` : ""].filter(Boolean).join(" · "), bad: false, n: run.length });
+    }
+    run = [];
+  };
+  for (const r of Array.isArray(list) ? list : []) {
+    const m = eventModel(r);
+    if (m.bad) {
+      flush();
+      out.push({ ...eventLine(r), n: 1 });
+    } else {
+      if (run.length && run[0].m.group !== m.group) flush();
+      run.push({ r, m });
+    }
+  }
+  flush();
+  return out;
+}
+
 /** One throttle.jsonl record in plain words: {key, when, text, bad}. */
 export function eventLine(r) {
   const m = eventModel(r);
@@ -257,14 +307,7 @@ export function eventLine(r) {
   return { key: m.key, when: t, text, bad: false };
 }
 
-// ---------------------------------------------------------------- state (pure)
-
-const ACCEPTED_WORDS = { matches: "matches the CPU", equivalent: "matches the CPU (after the V(n) ≥ V(n−1) rule)", unknown: "no accepted state to compare with" };
-export function acceptedLine(acc) {
-  if (!acc) return ACCEPTED_WORDS.unknown;
-  if (acc.kind === "differs") return `differs in ${acc.n} ${acc.n === 1 ? "unit" : "units"}`;
-  return ACCEPTED_WORDS[acc.kind] || ACCEPTED_WORDS.unknown;
-}
+// ---------------------------------------------------------------- last quick screen (pure)
 
 /** The last quick screen as one line ("clean · CPU integer · 5 min · Oct 18 10:29"), or a reason. */
 export function lastScreenLine(list, loaded) {
@@ -274,13 +317,6 @@ export function lastScreenLine(list, loaded) {
   const n = isNum(r.errors) ? r.errors : 0;
   const word = n > 0 ? `${n} ${n === 1 ? "error" : "errors"}` : r.stopped_by === "cancel" ? "stopped" : r.stopped_by === "error" ? "tool error" : r.health && r.health !== "clean" ? "health changed" : "clean";
   return `${word} · ${screenText(r)} · ${fmtLen(r.duration_s)} · ${fmtDate(r.started)}`;
-}
-
-/** Mailbox requests this boot as a quiet line. */
-export function mbxLine(op) {
-  const used = op && isNum(op.opsUsed) ? op.opsUsed : null;
-  const cap = op && isNum(op.opsBudget) && op.opsBudget > 0 ? op.opsBudget : null;
-  return used === null ? NA : `${used} this boot${cap === null ? "" : ` · cap ${cap}`}`;
 }
 
 /** Memory panel model from a mem.read result. -> {available:false, reason} | {available:true, headline, primary, rows:[[k,v]], dimms, summary} */
@@ -301,15 +337,14 @@ export function memModel(r) {
     headline: `${isNum(r.mts) ? "DDR5-" + r.mts : "DDR5"} · Gear ${isNum(r.gear) ? r.gear : NA} · ${typeof r.cmd_rate === "string" ? r.cmd_rate : NA}`,
     primary: ["tCL", "tRCD", "tRP", "tRAS"].map(tm).join("-"),
     rows: [
-      ["tRFC", tm("tRFC")],
-      ["tREFI", tm("tREFI")],
-      ["Memory clock", isNum(r.qclk_mhz) ? `${r.qclk_mhz.toFixed(1)} MHz` : NA],
+      ...(isNum(r.qclk_mhz) && !(isNum(r.mts) && Math.abs(r.qclk_mhz * 2 - r.mts) < 1) ? [["Memory clock", `${r.qclk_mhz.toFixed(1)} MHz`]] : []), // G-252: only when it says more than the rate (DDR5-7200 = 3600 MHz)
       ["BCLK", isNum(r.bclk_mhz) ? `${r.bclk_mhz.toFixed(1)} MHz` : NA],
       ["Peak bandwidth", isNum(r.max_bandwidth_mbs) ? `${(r.max_bandwidth_mbs / 1000).toFixed(1)} GB/s` : NA],
       ["Cross-check", cc.agree === true ? "agrees" : cc.agree === false ? "disagrees" : NA],
     ],
     dimms,
-    summary: `${dimms.length} ${dimms.length === 1 ? "module" : "modules"}${isNum(r.instances_ok) ? `, read from ${r.instances_ok} controller instances` : ""}`,
+    summary: `${dimms.length} ${dimms.length === 1 ? "module" : "modules"}`,
+    summaryTitle: isNum(r.instances_ok) ? `read from ${r.instances_ok} controller instances` : "",
   };
 }
 
@@ -361,18 +396,22 @@ export function dashboardView() {
           },
           bar: c.key === "busy" ? (u) => { const r = rowOf.get(u.id); return r && isNum(r.live.busy) ? r.live.busy / 100 : null; } : undefined,
         })),
-        { key: "top", label: "Curve top", unit: "×", num: true, hint: "unit.top", wide: true, value: (u) => { const r = rowOf.get(u.id); return r && isNum(r.top) ? { text: String(r.top), v: "base" } : null; } },
+        { key: "top", label: "Top", unit: "×", num: true, hint: "overview.top", wide: true, value: (u) => { const r = rowOf.get(u.id); return r && isNum(r.top) ? { text: String(r.top), v: "base" } : null; } },
       ];
       const ut = createUnitTable({ columns: cols, select: "none", label: "Units, live", id: "ov-units" });
       const unitsFoot = h("div", { class: "lx-tfoot-note", id: "ov-units-note", hidden: true });
       const unitsEmpty = emptyState({ title: EMPTY["overview.notopology"].title, teach: EMPTY["overview.notopology"].teach, id: "ov-units-empty" });
-      const unitsP = panel({ title: "Units · live", meta: "", id: "ov-units-panel", flush: true, body: [ut.el, unitsFoot, unitsEmpty] });
+      // G-252: the last quick screen is one footer line (the rest of the old State panel repeated the top bar)
+      const screenVal = h("span", { id: "ov-lastscreen" });
+      const toStress = button({ level: 0, label: "Stress ›", id: "ov-to-stress", hint: "stress.screen", onClick: () => goto("stress") });
+      const stateFoot = h("div", { class: "lx-tfoot-note lx-ov-screen", id: "ov-state", dataset: { hint: "overview.state" } }, "Last quick screen: ", screenVal, " ", toStress);
+      const unitsP = panel({ title: "Units · live", meta: "", id: "ov-units-panel", flush: true, body: [ut.el, unitsFoot, unitsEmpty, stateFoot] });
       unitsP.el.dataset.hint = "overview.units";
       let topoKey = "";
       const drawUnits = () => {
         const st = store.get();
         const topo = st.preflight ? st.preflight.topology : null;
-        rows = overviewRows(topo, st.telemetry.values);
+        rows = overviewRows(topo, st.telemetry.values, st.tune && st.tune.model);
         rowOf.clear();
         for (const r of rows) rowOf.set(r.id, r);
         const key = rows.map((r) => r.id + (r.fav ? "*" : "")).join(",");
@@ -385,9 +424,7 @@ export function dashboardView() {
         const note = rows.length ? liveFootnote(rows) : "";
         unitsFoot.textContent = note;
         unitsFoot.hidden = !note;
-        const p = rows.filter((r) => r.kind === "P").length;
-        const e = rows.filter((r) => r.kind === "E").length;
-        unitsP.setMeta(rows.length ? [h("span", { class: "lx-mono", text: String(p) }), " P-cores · ", h("span", { class: "lx-mono", text: String(e) }), " E-clusters"] : "");
+        unitsP.setMeta(""); // G-252: the group headers (P-CORES 8, E-CLUSTERS 4) already count the units
       };
 
       // ---- HISTORY: four small multiples, one time axis, one cursor
@@ -472,7 +509,8 @@ export function dashboardView() {
           if (e.words.textContent !== text) e.words.textContent = text;
           e.tr.dataset.on = r.on ? "true" : "false";
         }
-        limP.setMeta(!thr || thr.state === "na" ? `n/a · ${(thr && thr.reason) || "no telemetry yet"}` : `${thr.source}${thr.windowS ? ` · last ${fmtNum(thr.windowS, 1)} s` : ""}`);
+        limP.setMeta(!thr || thr.state === "na" ? `n/a · ${(thr && thr.reason) || "no telemetry yet"}` : thr.windowS ? `last ${fmtNum(thr.windowS, 0)} s` : "");
+        limP.band.metaEl.title = thr && thr.state !== "na" && thr.source ? `Read from the CPU's status bits (${thr.source}), oversampled` : ""; // G-252: the register is a tooltip, not the main view
       };
       let evSig = null; // G-248 (G-247 follow-up): the table is rebuilt only when what it shows changed
       const drawEvents = () => {
@@ -484,7 +522,7 @@ export function dashboardView() {
         const list = ev.state === "error" ? [] : visibleEvents(ev.records, st.throttleSession.resetAt, false).slice(0, EVENTS_SHOWN);
         if (!note) note = list.length ? `newest first · ${list.length} of ${ev.records.length}` : ev.state === "idle" ? "not read yet" : "none logged";
         setText(evMeta, note);
-        const lines = list.map(eventLine);
+        const lines = eventLines(list);
         const sig = JSON.stringify(lines.map((l) => [l.key, l.when, l.text, !!l.bad]));
         if (sig === evSig) return;
         evSig = sig;
@@ -516,25 +554,10 @@ export function dashboardView() {
         }
       }
 
-      // ---- STATE
+      // ---- last quick screen (footer line of the units panel)
       const stressCtl = stressController(ctx);
-      const accVal = h("span", { id: "ov-accepted" });
-      const readVal = h("span", { class: "lx-mono", id: "ov-lastread" });
-      const uvpVal = h("span", { id: "ov-uvp" });
-      const screenVal = h("span", { id: "ov-lastscreen" });
-      const mbxVal = h("span", { class: "lx-mono", id: "ov-mbx", dataset: { hint: "state.mbx" } });
-      const toProfiles = button({ level: 0, label: "Profiles ›", id: "ov-to-profiles", hint: "state.accepted", onClick: () => goto("profiles") });
-      const toStress = button({ level: 0, label: "Stress ›", id: "ov-to-stress", hint: "stress.screen", onClick: () => goto("stress") });
-      const stateP = panel({ title: "State", id: "ov-state", body: [kv([["Accepted state", [accVal, " ", toProfiles]], ["Last read", readVal], ["Undervolt Protection", uvpVal], ["Last quick screen", [screenVal, " ", toStress]], ["Mailbox requests", mbxVal]])] });
-      stateP.el.dataset.hint = "overview.state";
       const drawState = () => {
-        const st = store.get();
-        accVal.textContent = acceptedLine(st.accepted);
-        accVal.dataset.accepted = st.accepted ? st.accepted.kind : "unknown";
-        readVal.textContent = st.lastReadAt ? fmtClock(st.lastReadAt) : "not read this boot";
-        uvpVal.textContent = st.uvp === "on" ? "on: negative offsets are refused" : st.uvp === "off" ? "off" : "not known yet (the first apply tells; a Read does not)";
         screenVal.textContent = lastScreenLine(stressCtl.view.list, stressCtl.view.loaded);
-        mbxVal.textContent = mbxLine(st.helperOp);
       };
 
       // ---- MEMORY
@@ -558,6 +581,7 @@ export function dashboardView() {
         memRule.hidden = m.phase !== "loading";
         setButton(memBtn, { label: m.phase === "loading" ? "Reading memory" : "Read memory" });
         memP.el.dataset.phase = m.phase;
+        memP.band.metaEl.title = "";
         if (m.phase === "idle") memP.setMeta("not read yet");
         else if (m.phase === "loading") memP.setMeta("reading…");
         else if (m.phase === "error") memP.setMeta(`n/a · ${m.error}`);
@@ -566,6 +590,7 @@ export function dashboardView() {
           if (!mm.available) memP.setMeta(`n/a · ${mm.reason}`);
           else {
             memP.setMeta(mm.summary);
+            memP.band.metaEl.title = mm.summaryTitle;
             if (memBody.childNodes.length === 0) memBody.append(
               h("div", { class: "lx-ov-mem-head" }, h("span", { class: "lx-mono lx-ov-mem-big", text: mm.headline }), h("span", { class: "lx-mono lx-dim", text: mm.primary })),
               kv(mm.rows.map(([k, v]) => [k, v, { mono: true }])),
@@ -584,17 +609,17 @@ export function dashboardView() {
         if (!stopped) drawMem();
       }
 
-      root.append(h("div", { class: "lx-tiles lx-ov", id: "ov" }, unitsP.el, histP.el, limP.el, h("div", { class: "lx-ov-side" }, stateP.el, memP.el)));
+      root.append(h("div", { class: "lx-tiles lx-ov", id: "ov" }, unitsP.el, histP.el, limP.el, h("div", { class: "lx-ov-side" }, memP.el)));
 
       // ---- live wiring: telemetry ticks update cells in place; panels never rebuild a focused control
       subs.push(
         store.watch((s) => s.telemetry, () => { drawUnits(); drawHistory(); drawLimits(); setHead(); }),
         store.watch((s) => s.preflight, () => drawUnits()),
+        store.watch((s) => s.tune && s.tune.model, () => drawUnits()),
         store.watch((s) => s.link.state, (state) => { if (state === "connected") refreshEvents(); }),
         store.watch((s) => s.throttleEvents, () => drawEvents()),
         store.watch((s) => s.throttleSession.resetAt, () => drawEvents()),
         store.subscribe((s, prev) => {
-          if (s.helperOp !== prev.helperOp || s.accepted !== prev.accepted || s.lastReadAt !== prev.lastReadAt || s.uvp !== prev.uvp) drawState();
           if (s.link !== prev.link) { setHead(); drawLimits(); }
           if (s.rt !== prev.rt) { drawLimits(); drawHistory(); }
         }),

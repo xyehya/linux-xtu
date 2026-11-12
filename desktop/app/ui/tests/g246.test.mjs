@@ -16,7 +16,6 @@ const { modelFromRead, snapOffsetMv } = await import("../lib/units.js");
 const { buildIntent } = await import("../lib/intent.js");
 const { fmtLocalDateTime, fmtLocalStamp } = await import("../lib/format.js");
 const { curveName, curveTitle, libraryRow, estimateCost, measureText, measuringText, chartSpec } = await import("../views/curves.js");
-const { bindsText, runsUpTo } = await import("../views/tune/frequency.js");
 const { TIPS } = await import("../lib/tips.js");
 const { HINTS } = await import("../lib/hints.js");
 const { popoverModel } = await import("../components/throttle.js");
@@ -48,14 +47,11 @@ function liveFrame(t, extra = {}) {
 const word = (raw, status = [], log = []) => ({ value: { raw, status, log, unknown_bits: [] }, status: "ok", unit: "", source: "msr 0x64F" });
 
 // ---------------------------------------------------------------- QA-02
-test("QA-02: the Overview UVP line says the first apply tells, not a Read", async () => {
-  const { store, ctx, root } = await rig();
+test("QA-02 / G-252: the Overview no longer carries a UVP row (the top bar says it)", async () => {
+  const { ctx, root } = await rig();
   const v = dashboardView();
   v.mount(root, ctx);
-  assert.match(text(root.querySelector("#ov-uvp")), /the first apply tells/);
-  assert.doesNotMatch(text(root.querySelector("#ov-uvp")), /Read or an apply/);
-  setUvp(store, "off");
-  assert.equal(text(root.querySelector("#ov-uvp")), "off");
+  assert.equal(root.querySelector("#ov-uvp"), null);
   v.unmount();
   root.remove();
 });
@@ -90,29 +86,21 @@ test("QA-04: Tune › Cores shows -70.3 in the field after typing -70, with the 
   assert.equal(input.value, "−70.3");
   const tr = root.querySelector("[data-vf-table='P'] tr[data-ratio='53']");
   assert.equal(text(tr.querySelectorAll("td")[6]).startsWith("−70.3"), true, "the Δ column follows the held value");
-  assert.match(text(root), /holds offsets in 1\/1024 V steps: −70 mV is held as −70\.3 mV/);
+  assert.match(text(root), /−70 mV is stored as −70\.3 mV \(nearest 1\/1024 V step\)\./);
   view.unmount();
 });
 
 // ---------------------------------------------------------------- QA-08 / QA-09
-test("QA-08: the factory top is 'Curve top' on Cores and Overview; the hint says Max (Tune › Frequency) is what the core may run", async () => {
+test("QA-08 / G-252: the factory top is 'Curve top' on Cores; the Overview column is the core's own 'Top ×'; the hint says Max (Tune › Frequency) is what the core may run", async () => {
   assert.equal(HINTS["unit.top"].label, "Curve top");
   assert.match(HINTS["unit.top"].line, /not what the core may run/);
   const { ctx, root } = await rig();
   const v = dashboardView();
   v.mount(root, ctx);
-  assert.ok(root.querySelectorAll("#ov-units th").some((th) => /Curve top/.test(text(th))), "Overview column header");
-  assert.ok(!root.querySelectorAll("#ov-units th").some((th) => /^Top\b/.test(text(th))));
+  assert.ok(root.querySelectorAll("#ov-units th").some((th) => /^Top\s*×$/.test(text(th))), "Overview column header");
+  assert.ok(!root.querySelectorAll("#ov-units th").some((th) => /Curve top/.test(text(th))));
   v.unmount();
   root.remove();
-});
-
-test("QA-09: Binds names the limit for 1 busy and for all busy when they differ", () => {
-  const L = { ...runsUpTo({ ceiling: 55, t1: 57, tall: 54, cap: null }) };
-  assert.deepEqual([L.binds, L.bindsAll], ["max ratio", "turbo table"], "P1 with the all-busy turbo bucket lowered to 54");
-  assert.equal(bindsText(L), "max ratio · all busy: turbo table");
-  assert.equal(bindsText({ binds: "turbo table", bindsAll: "turbo table" }), "turbo table");
-  assert.equal(bindsText({ binds: null, bindsAll: null }), "—");
 });
 
 // ---------------------------------------------------------------- QA-34

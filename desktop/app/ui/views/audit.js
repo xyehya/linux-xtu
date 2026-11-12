@@ -404,7 +404,7 @@ export function auditView() {
     lx: true,
     mount(root, ctx) {
       const { bridge, store } = ctx;
-      const state = { filter: "all", text: "", records: [], ops: [], truncated: false, older: false, cursor: null, reading: false, path: "", phase: "loading", error: "", seq: 0, open: new Set(), raw: new Set() };
+      const state = { filter: "changes", text: "", records: [], ops: [], truncated: false, older: false, cursor: null, reading: false, path: "", phase: "loading", error: "", seq: 0, open: new Set(), raw: new Set() };
 
       // ---- header: search, filter, Refresh (reads the log file: no mailbox request)
       const search = h("input", { type: "search", class: "lx-text lx-audit-search", id: "audit-search", placeholder: "Search…", "aria-label": "Search operations", dataset: { hint: "audit.search" } });
@@ -413,7 +413,7 @@ export function auditView() {
         draw();
         more();
       });
-      const seg = createSegmented({ options: [{ value: "all", label: "All" }, { value: "changes", label: "Changes" }], value: "all", label: "Show", hint: "audit.filter", id: "audit-filter", onChange: (v) => { state.filter = v; draw(); more(); } });
+      const seg = createSegmented({ options: [{ value: "all", label: "All" }, { value: "changes", label: "Changes" }], value: "changes", label: "Show", hint: "audit.filter", id: "audit-filter", onChange: (v) => { state.filter = v; draw(); more(); } });
       const refresh = button({ level: 1, label: "Refresh", cost: "0 req", id: "audit-refresh", attrs: { "data-audit": "refresh" }, onClick: () => load() });
       ctx.head.set({ sub: "what the helper did, from its own log", end: [search, seg.el, refresh] });
 
@@ -427,7 +427,6 @@ export function auditView() {
           h("th", { scope: "col", text: "Time" }),
           h("th", { scope: "col", dataset: { hint: "audit.op" }, text: "Operation" }),
           h("th", { class: "lx-n", scope: "col", text: "Req" }),
-          h("th", { class: "lx-n lx-wide", scope: "col", text: "Took" }),
           h("th", { scope: "col", text: "Result" }),
           h("th", { scope: "col", text: "What happened" }),
         )),
@@ -494,16 +493,16 @@ export function auditView() {
           return;
         }
         const ops = filterOps(state.ops, state);
-        p.setMeta(`${plural(ops.length, "operation")}${ops.length !== state.ops.length ? ` of ${state.ops.length} loaded` : ""} · ${plural(state.records.length, "record")} loaded${state.older ? ", older ones available" : ""} · newest first`);
+        p.setMeta(`${plural(ops.length, "operation")}${ops.length !== state.ops.length ? ` of ${state.ops.length} loaded` : ""} · newest first`); // G-252: the record count and the log path are the footer's tooltip
         holder.append(table, foot);
         clear(foot);
-        foot.append(h("span", { text: `Local time. From the helper's audit log${state.path ? " " + state.path : ""}. Operations are grouped by purpose and time.${state.reading ? " Reading older records…" : ""}` }));
+        foot.append(h("span", { title: `${plural(state.records.length, "record")} loaded${state.older ? ", older ones available" : ""}. From the helper's audit log${state.path ? " " + state.path : ""}.`, text: `Local time. Operations are grouped by purpose and time.${state.reading ? " Reading older records…" : ""}` }));
         if (state.older && !state.reading) {
           const older = button({ level: 1, label: "Load older", cost: "0 req", id: "audit-older", attrs: { "data-audit": "older" }, onClick: () => more(true) });
           foot.append(" ", older);
         }
         if (!ops.length) {
-          tbody.append(h("tr", { dataset: { none: "true" } }, h("td", { colspan: 7, class: "lx-audit-none", text: "No operation matches." })));
+          tbody.append(h("tr", { dataset: { none: "true" } }, h("td", { colspan: 6, class: "lx-audit-none", text: "No operation matches." })));
           return;
         }
         for (const g of ops) {
@@ -514,7 +513,6 @@ export function auditView() {
             h("td", { class: "lx-mono", title: g.records.find(isObj)?.ts ?? "", text: g.start !== null ? fmtClock(g.start) : NA }),
             h("td", { class: "lx-k", text: g.label }),
             h("td", { class: "lx-n", text: String(g.requests) + (g.partial ? "+" : "") }),
-            h("td", { class: "lx-n lx-wide", text: tookText(g.took) }),
             h("td", {}, tone(g.result)),
             h("td", { class: "lx-audit-line", text: g.line + (g.partial ? " · continues in older records" : "") }));
           const toggle = () => {
@@ -530,7 +528,7 @@ export function auditView() {
             toggle();
           });
           tbody.append(tr);
-          if (open) tbody.append(h("tr", { class: "lx-why-row lx-audit-open", dataset: { opRows: g.id } }, h("td", { colspan: 7 }, rawTable(g))));
+          if (open) tbody.append(h("tr", { class: "lx-why-row lx-audit-open", dataset: { opRows: g.id } }, h("td", { colspan: 6 }, rawTable(g))));
         }
       }
 

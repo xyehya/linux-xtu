@@ -1,4 +1,4 @@
-/* Overview (desktop/DESIGN.md §9.1): layout only. Units · live | History on top, Limits now (+ throttle events) | State + Memory below.
+/* Overview (desktop/DESIGN.md §9.1): layout only. Units · live | History on top, Limits now (+ throttle events) | Memory below.
    The six live values stay in the readout bar (V-05); heat is a bar in the Busy cell (V-06); no tiles, no donut (V-22). */
 
 .lx-ov {
@@ -18,7 +18,7 @@
 }
 
 /* G-248: the bottom row fills its height at any window size. Limits now + the throttle events: the events list takes what is left and scrolls inside it (flex-basis 0, so a long
-   list never grows the row); State + Memory: the memory body takes what is left of the side column the same way. */
+   list never grows the row); Memory: the memory body takes what is left of the side column the same way. */
 #ov-limits-panel > .lx-panel-b {
   display: flex;
   flex: 1 1 auto;
@@ -92,7 +92,7 @@
   color: var(--fg);
 }
 
-#ov-state .lx-kv dd {
+.lx-ov-screen {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;

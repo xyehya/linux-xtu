@@ -1,8 +1,10 @@
-// views/tune/frequency.js: Tune › Frequency (R-S2; desktop/DESIGN.md §9.3, assessment 03 U-20/U-21/U-22, WP-6). One view for everything that limits a unit's ratio:
-//   RATIO LIMITS   one row per P-core / E-cluster: Max× (0x1C, mailbox) · OC× · Turbo 1 busy× · Turbo all× (MSR tables) · Cap× (cpufreq, runtime; the one field here)
-//                  → Runs up to (1 busy, all busy) = the lowest of them, and the limit that binds named. An OC ratio above the table stays capped by it (D-050):
-//                  an info line on the unit's row, never an error.
-//   TURBO TABLE · P-CORES / E-CORES   the eight buckets as fields (ratio per busy-core count), Set all / Fill right, a step chart on a real busy-core axis.
+// views/tune/frequency.js: Tune › Frequency (R-S2; desktop/DESIGN.md §9.3, assessment 03 U-20/U-21/U-22, WP-6; G-251). One view for everything that limits a unit's ratio. A core runs at the
+// lowest of its own top ratio, its ratio cap and the turbo-table entry for the number of busy cores; the screen shows each of those once:
+//   RATIO LIMITS   one row per P-core / E-cluster, only what is per unit: Top ratio (lib/units.js topRatio: the OC ratio if the unit has one, else its fused max ratio) · Cap (cpufreq,
+//                  runtime; the one field here; empty = no cap below the top ratio) · Clock now. An OC ratio above the table stays capped by it (D-050): an info line on the unit's row,
+//                  never an error.
+//   TURBO TABLE · P-CORES / E-CORES   the eight buckets as fields (a ceiling by number of busy cores), Set all / Fill right, a computed line (what each unit really gets with 1 busy and with
+//                  all busy, from the draft), a step chart on a real busy-core axis.
 // Turbo buckets edit the shared Tune draft through lib/draft.js editBucket: the table may only fall as more cores are busy; a value above the bucket to its left
 // is refused in the field with its reason (refused.turbo_rise), the typed text kept, nothing changed. Lowering a bucket brings the buckets on its right down with
 // it (that is the lib's rule) and the view says which ones followed (info.turbo_followed) — never silently (U-22). The helper refuses a rising table at plan time
@@ -23,11 +25,12 @@ import { tag, mark, fav } from "../../components/ann.js";
 import { why, setWhy } from "../../components/help.js";
 import { createPlot } from "../../components/plot.js";
 import * as D from "../../lib/draft.js";
-import { stockMaxOf, ocClass, favoredIds } from "../../lib/units.js";
+import { favoredIds, topRatio } from "../../lib/units.js";
 import { limitsFor } from "../../lib/limits.js";
 import { isNum } from "../../lib/format.js";
 import { normCpuLimits, unitCapWindow } from "../../lib/cpulimits.js";
 import { ensureRt, editRt, capRows } from "../../lib/rtstate.js";
+import { liveFace } from "../../lib/live.js";
 import { ocAboveTable } from "./oc.js";
 import { loadRead, registerRuntimeKinds } from "./runtime-kinds.js";
 import { restoreButton, rtLock, whyOf } from "./rt-common.js";
@@ -37,6 +40,10 @@ export const KINDS = ["P", "E"];
 export const BUCKETS = 8;
 const KIND_TITLE = { P: "P-cores", E: "E-cores" };
 const TIMES = "×";
+/** The whole model of this screen in one line (the Ratio limits panel meta; the hint freq.effective says the same). */
+export const RULE = "A core runs at the lowest of its top ratio, its cap and the turbo-table entry for the number of busy cores.";
+const TURBO_NOTE = "A ceiling by number of busy cores; no core goes above its own top ratio or cap.";
+const TURBO_REGS = { P: "Turbo ratio limit registers 0x1AD / 0x1AE", E: "Turbo ratio limit registers 0x650 / 0x651" };
 
 // ---------------------------------------------------------------- pure (node-tested)
 
@@ -47,71 +54,78 @@ export function bucketCounts(model, kind) {
   return c ? c.slice() : Array.from({ length: BUCKETS }, (_, i) => i + 1);
 }
 
-/**
- * The ratio a unit runs up to, from its limits: {ceiling (null = none), ceilingName, t1, tall, cap (null = none)} -> {one, all, binds}.
- * one / all = the lowest limit with one / every core busy; binds = the limit that sets `one`, bindsAll = the one that sets `all` ("turbo table" | ceilingName | "ratio cap"). A tie goes to the
- * table, then the unit's own ceiling: a cap only binds when it is strictly lower (a cap at the maximum holds nothing back). null values are not limits.
- */
-export function runsUpTo({ ceiling = null, ceilingName = "max ratio", t1 = null, tall = null, cap = null } = {}) {
-  const pick = (t) => {
-    const c = [
-      ["turbo table", t],
-      [ceilingName, ceiling],
-      ["ratio cap", cap],
-    ].filter(([, v]) => isNum(v));
-    if (!c.length) return { v: null, by: null };
-    let best = c[0];
-    for (const x of c) if (x[1] < best[1]) best = x;
-    return { v: best[1], by: best[0] };
-  };
-  const one = pick(t1);
-  const all = pick(tall);
-  return { one: one.v, all: all.v, binds: one.by, bindsAll: all.by };
-}
-
-/** The Binds cell (QA-09): which limit holds the unit with one busy core and which with every core busy; one word when they are the same limit. */
-export function bindsText(L) {
-  if (!L.binds && !L.bindsAll) return "—";
-  if (!L.bindsAll || L.bindsAll === L.binds) return L.binds || "—";
-  return (L.binds || "—") + " · all busy: " + L.bindsAll;
+/** The ratio a unit runs at with a turbo-table entry of `bucket`: the lowest of its top ratio, its cap and the table entry (null values are not limits). */
+export function ratioAt(L, bucket) {
+  const xs = [L.top, L.cap, bucket].filter(isNum);
+  return xs.length ? Math.min(...xs) : null;
 }
 
 /**
  * One unit's row of the RATIO LIMITS table from the model, the draft and the runtime caps. Pure.
- * -> {id, kind, cpus, max, oc, ocEdited, t1, tall, t1Edited, tallEdited, cap, capRead, capEdited, one, all, binds}
- *   max: a P-core's 0x1C ratio capped at its factory top (stockMaxOf); E-clusters have no per-cluster max ratio (null).
- *   oc:  the (drafted) OC ratio when it raises the unit above its stock max, else null.
- *   cap: the cap edited, else the one in force (scaling_max_freq); a tie with the table or the unit's ceiling binds to those (runsUpTo).
+ * -> {id, kind, cpus, top, topOc, topFused, topEdited, ocEdited, cap, capRead, capEdited, capShown}
+ *   top:  the unit's own ceiling (lib/units.js topRatio of the drafted OC ratio): OC ratio, else the fused max ratio (P favored 57, others 55; E fused 46); topOc = it is an OC / boot-set
+ *         ratio, topFused = the fused value beside it.
+ *   cap:  the cap edited, else the one in force (scaling_max_freq); a cap equal to or above the top holds nothing back (ratioAt takes the lowest).
+ *   capShown: what the Cap field holds: an edited cap, else the one read when it is below the top ratio, else null (the field says "none").
  */
 export function unitLimits(model, draft, id, caps = {}, capRead = null) {
   const u = model.units[id];
-  const kind = u.kind;
-  const t = D.turboEff(model, draft, kind);
-  const read = D.turboCur(model, kind);
   const r = D.effRatio(draft, u);
-  const cls = ocClass(u, r);
-  const oc = cls === "oc" || cls === "middle" ? r : null;
-  const max = kind === "P" ? stockMaxOf(u) : null;
-  const ceiling = kind === "P" ? (isNum(max) ? Math.max(max, oc ?? 0) : oc) : null;
+  const t = topRatio(model, u, r);
+  const top = t ? t.ratio : null;
   // the cap in force is scaling_max_freq: it is a limit even at the kernel's default (whether cpufreq's maximum follows an OC ratio is not measured)
   const cap = isNum(caps[id]) ? caps[id] : isNum(capRead) ? capRead : null;
-  const lim = runsUpTo({ ceiling, ceilingName: isNum(oc) && (!isNum(max) || oc > max) ? "OC ratio" : "max ratio", t1: t ? t[0] : null, tall: t ? t[t.length - 1] : null, cap });
+  const capShown = isNum(caps[id]) ? caps[id] : isNum(capRead) && (!isNum(top) || capRead < top) ? capRead : null;
+  const ocEdited = !!(draft.units[id] && draft.units[id].ratio !== undefined && draft.units[id].ratio !== D.curRatio(u));
   return {
     id,
-    kind,
+    kind: u.kind,
     cpus: u.cpus,
-    max,
-    oc,
-    ocEdited: !!(draft.units[id] && draft.units[id].ratio !== undefined),
-    t1: t ? t[0] : null,
-    tall: t ? t[t.length - 1] : null,
-    t1Edited: !!(t && read && t[0] !== read[0]),
-    tallEdited: !!(t && read && t[t.length - 1] !== read[read.length - 1]),
+    top,
+    topOc: !!(t && t.oc),
+    topFused: t ? t.fused : null,
+    topEdited: !!(t && t.oc && ocEdited),
+    ocEdited,
     cap,
     capRead: isNum(capRead) ? capRead : null,
     capEdited: isNum(caps[id]) && caps[id] !== capRead,
-    ...lim,
+    capShown,
   };
+}
+
+/** The Top ratio cell's parts: "57×" / "47×" + OC + "(fused 46×)"; null = not read. */
+export function topText(L) {
+  if (!isNum(L.top)) return null;
+  return { n: L.top + TIMES, oc: L.topOc, fused: L.topOc && isNum(L.topFused) ? "(fused " + L.topFused + TIMES + ")" : "" };
+}
+
+/** Units grouped by the ratio they get: "P0, P3 57× · others 55×"; one value for all -> "all 55×" (P) / "47×" (E). The biggest group is "others" and comes last. */
+export function groupText(results, kind) {
+  const by = new Map();
+  for (const r of results) {
+    if (!isNum(r.v)) continue;
+    if (!by.has(r.v)) by.set(r.v, []);
+    by.get(r.v).push(r.id);
+  }
+  if (!by.size) return "n/a";
+  if (by.size === 1) return (kind === "P" ? "all " : "") + [...by.keys()][0] + TIMES;
+  const groups = [...by.entries()].map(([v, ids]) => ({ v, ids }));
+  const rest = groups.reduce((a, g) => (g.ids.length > a.ids.length || (g.ids.length === a.ids.length && g.v < a.v) ? g : a));
+  const named = groups.filter((g) => g !== rest).sort((a, b) => b.v - a.v);
+  return [...named.map((g) => g.ids.join(", ") + " " + g.v + TIMES), "others " + rest.v + TIMES].join(" · ");
+}
+
+/**
+ * The computed line under a turbo table, live from the draft (G-251): what each unit of the kind really runs at with the first and with the last bucket's busy-core count, by the rule
+ * min(top ratio, cap, table). "1 busy: P0, P3 57× · others 55× — 8 busy: all 55×".
+ */
+export function turboLine(model, draft, kind, caps = {}, capsRead = {}) {
+  const t = D.turboEff(model, draft, kind);
+  if (!Array.isArray(t) || !t.length) return "";
+  const counts = bucketCounts(model, kind);
+  const ls = model.order.filter((id) => model.units[id] && model.units[id].kind === kind).map((id) => unitLimits(model, draft, id, caps, capsRead[id]));
+  const at = (i) => counts[i] + " busy: " + groupText(ls.map((L) => ({ id: L.id, v: ratioAt(L, t[i]) })), kind);
+  return t.length > 1 && counts[0] !== counts[t.length - 1] ? at(0) + " — " + at(t.length - 1) : at(0);
 }
 
 /**
@@ -186,15 +200,10 @@ function api(ctx) {
 
 const RATIO_COLS = [
   { key: "unit", label: "Unit" },
-  { key: "max", label: "Max", unit: TIMES, num: true, hint: "freq.maxratio" },
-  { key: "oc", label: "OC", unit: TIMES, num: true, hint: "freq.oc" },
-  { key: "t1", label: "Turbo 1 busy", unit: TIMES, num: true, hint: "freq.turbo_one" },
-  { key: "tall", label: "Turbo all", unit: TIMES, num: true, hint: "freq.turbo_all" },
+  { key: "top", label: "Top ratio", hint: "unit.topratio" },
   { key: "cap", label: "Cap", unit: TIMES, field: true, hint: "freq.cap" },
   { key: "m", label: "", mark: true },
-  { key: "one", label: "Runs up to · 1 busy", unit: TIMES, num: true, hint: "freq.effective" },
-  { key: "all", label: "all busy", unit: TIMES, num: true, hint: "freq.effective" },
-  { key: "binds", label: "Binds", hint: "freq.binds", cls: "lx-freq-binds" },
+  { key: "clk", label: "Clock now", unit: "GHz", num: true, hint: "unit.clock" },
 ];
 
 export function mount(el, ctx = {}) {
@@ -222,6 +231,7 @@ export function mount(el, ctx = {}) {
     inst.disposers.push(store.watch((s) => s.rt, () => paint(inst)));
     inst.disposers.push(store.watch((s) => (editLock(s) ? editLock(s).key : null), () => paint(inst)));
     inst.disposers.push(store.watch((s) => s.mode, () => paint(inst)));
+    inst.disposers.push(store.watch((s) => s.telemetry && s.telemetry.values, () => { if (V === inst) for (const id of inst.rows.keys()) paintClock(inst, id); }));
     inst.disposers.push(store.watch((s) => s.link && s.link.state, (state) => {
       paint(inst);
       if (state === "connected" && store.get().rt.runtime.state === "idle" && bridge) void loadRead(store, bridge, "runtime");
@@ -277,7 +287,7 @@ function build(inst) {
   const foot = h("div", { class: "lx-rt-foot" }, inst.limitsWhy);
   const lp = panel({
     title: "Ratio limits",
-    meta: h("span", {}, "max, OC ", h("span", { class: "lx-mono", text: "mailbox" }), " · turbo ", h("span", { class: "lx-mono", text: "MSR" }), " · cap ", h("span", { class: "lx-mono", text: "runtime" })),
+    meta: h("span", { dataset: { hint: "freq.effective" }, text: RULE }),
     end: restore ? restore.el : null,
     body: [table.el, foot],
     flush: true,
@@ -327,6 +337,7 @@ function buildKind(inst, kind) {
   const tbl = h("table", { class: ["lx-tbl", "lx-freq-buckets"], "aria-label": KIND_TITLE[kind] + " turbo table: ratio by busy cores" }, h("thead", {}, head), h("tbody", {}, valRow));
   const followed = why(null);
   whys.append(followed);
+  const line = h("div", { class: "lx-freq-line", dataset: { part: "turbo-line" } });
 
   // Set all / Fill right
   const allField = createField({ label: "Set every " + KIND_TITLE[kind] + " bucket to", hint: "turbo.set_all", width: 3, decimals: 0, max: lim.ratio ? lim.ratio.max : null, source: lim.ratio ? lim.ratio.source : "" });
@@ -358,15 +369,15 @@ function buildKind(inst, kind) {
   });
   const lp = panel({
     title: "Turbo table · " + KIND_TITLE[kind],
-    meta: h("span", { class: "lx-mono", text: kind === "P" ? "0x1AD / 0x1AE" : "0x650 / 0x651" }),
-    end: tag("MSR · cold boot clears", "persist"),
-    body: [h("div", { class: "lx-freq-tbl" }, tbl), whys, tools, plot.el],
+    end: tag("Lost at cold boot", "persist"),
+    body: [h("p", { class: "lx-tfoot-note lx-freq-note", dataset: { part: "turbo-note" }, text: TURBO_NOTE }), h("div", { class: "lx-freq-tbl" }, tbl), line, whys, tools, plot.el],
     id: "freq-turbo-" + kind,
   });
+  lp.band.el.firstChild.setAttribute("title", TURBO_REGS[kind]); // the register numbers are a tooltip, not part of the screen
   lp.el.classList.add("lx-freq-turbo");
   lp.el.dataset.panel = "turbo";
   lp.el.dataset.kind = kind;
-  inst.kinds[kind] = { panel: lp, fields, followed, allField, setAllBtn, fillBtn, plot, yOpts, counts, sel: 0, plotKey: "" };
+  inst.kinds[kind] = { panel: lp, line, fields, followed, allField, setAllBtn, fillBtn, plot, yOpts, counts, sel: 0, plotKey: "" };
   return lp.el;
 }
 
@@ -452,27 +463,18 @@ function paint(inst) {
   for (const [id, row] of inst.rows) {
     const L = unitLimits(inst.model, draft, id, edits, capsRead[id]);
     const c = row.tr.cells_;
-    const v = (x, edited) => (isNum(x) ? { text: String(x), v: edited ? "set" : null } : null);
-    fillCell(c.max, v(L.max, false));
-    fillCell(c.oc, v(L.oc, L.ocEdited));
-    fillCell(c.t1, v(L.t1, L.t1Edited));
-    fillCell(c.tall, v(L.tall, L.tallEdited));
-    fillCell(c.one, isNum(L.one) ? { text: String(L.one), v: L.ocEdited || L.t1Edited || L.capEdited ? "set" : null } : { text: "n/a", na: true });
-    fillCell(c.all, isNum(L.all) ? { text: String(L.all), v: L.ocEdited || L.tallEdited || L.capEdited ? "set" : null } : { text: "n/a", na: true });
-    fillCell(c.binds, bindsText(L));
-    const edited = L.ocEdited || L.t1Edited || L.tallEdited || L.capEdited;
+    fillCell(c.top, topCell(row, L));
     fillCell(c.m, L.capEdited ? { node: mark() } : "");
     if (L.capEdited) row.tr.dataset.state = "edit";
     else row.tr.removeAttribute("data-state");
-    row.tr.dataset.binds = L.binds || "";
-    row.tr.dataset.bindsAll = L.bindsAll || "";
-    row.tr.dataset.edited = String(edited);
+    row.tr.dataset.edited = String(L.ocEdited || L.capEdited);
+    paintClock(inst, id);
     // the cap field of this unit
     const capF = inst.caps.get(id);
     const g = groups.find((x) => x.unit === id);
     if (capF) {
       fillCellNode(c.cap, capF.f.el);
-      if (capF.f.state() !== "refused") capF.f.set(isNum(edits[id]) ? edits[id] : g ? g.capRatio : null); // a refusal stays until the operator acts on the field
+      if (capF.f.state() !== "refused") capF.f.set(L.capShown); // a refusal stays until the operator acts on the field
       if (tuneLock) capF.f.setState("reading");
       else if (lock) capF.f.setState(lock.state);
       else if (g && !g.online.length) capF.f.setState("disabled", "locked.cpu_offline", { cpu: g.cpus.join(", ") });
@@ -487,7 +489,7 @@ function paint(inst) {
   if (!colWhy && result && Array.isArray(result.offline) && result.offline.length) colWhy = { key: "locked.cpu_offline", vars: { cpu: result.offline.join(", ") } };
   setWhy(inst.limitsWhy, colWhy ? colWhy.key : null, colWhy ? colWhy.vars : {});
   inst.table.foot(footText(cl, groups));
-  for (const kind of KINDS) paintKind(inst, kind, draft, tuneLock);
+  for (const kind of KINDS) paintKind(inst, kind, draft, tuneLock, edits, capsRead);
   if (inst.restore) inst.restore.update();
 }
 
@@ -499,10 +501,31 @@ function fillCellNode(td, node) {
 }
 
 function footText(cl, groups) {
+  const same = "An E-cluster cap applies to its four CPUs.";
   const ws = groups.map((g) => unitCapWindow(cl, g.cpus, g.maxRatio)).filter(Boolean);
-  if (!ws.length) return "Cap: cpufreq maximum per unit; an E-cluster’s cap applies to its four CPUs.";
+  if (!ws.length) return same;
   const lo = ws.map((w) => w.min).filter(isNum);
-  return "Cap window " + (lo.length ? Math.min(...lo) : "?") + "–" + Math.max(...ws.map((w) => w.max)) + TIMES + " (cpufreq range of each unit) · an E-cluster’s cap applies to its four CPUs.";
+  return "Cap range " + (lo.length ? Math.min(...lo) : "?") + "–" + Math.max(...ws.map((w) => w.max)) + TIMES + ". " + same;
+}
+
+/** The Top ratio cell of a row: "57×", or "47× OC" with the fused value muted beside it. One node per value, so a repaint does not rebuild the cell. */
+function topCell(row, L) {
+  const t = topText(L);
+  if (!t) return { text: "n/a", na: true };
+  const sig = t.n + "|" + t.oc + "|" + t.fused;
+  if (!row.topNode || row.topSig !== sig) {
+    row.topSig = sig;
+    row.topNode = h("span", { class: "lx-freq-top" }, h("span", { class: "lx-mono", text: t.n }), t.oc ? h("span", { class: "lx-freq-oc", text: " OC" }) : null, t.fused ? h("span", { class: "lx-sub", text: " " + t.fused }) : null);
+  }
+  return { node: row.topNode, v: L.topEdited ? "set" : null };
+}
+
+/** The live clock of a unit (highest of its CPUs, GHz): the one column that follows telemetry. */
+function paintClock(inst, id) {
+  const row = inst.rows.get(id);
+  const u = inst.model.units[id];
+  const mhz = liveFace(u, inst.store ? inst.store.get().telemetry.values : null).mhz;
+  fillCell(row.tr.cells_.clk, isNum(mhz) ? (mhz / 1000).toFixed(2) : { text: "n/a", na: true });
 }
 
 /** (Re)build the cap fields when the units or their windows change (a new runtime read). */
@@ -518,7 +541,7 @@ function paintCaps(inst, groups, cl) {
       continue;
     }
     const win = unitCapWindow(cl, g.online.length ? g.online : g.cpus, g.maxRatio);
-    const f = createField({ label: "Ratio cap of " + id, hint: "freq.cap", width: 3, decimals: 0, min: win ? win.min : null, max: win ? win.max : null, source: win ? win.source : "", onCommit: (v) => capCommit(inst, id, v) });
+    const f = createField({ label: "Ratio cap of " + id, hint: "freq.cap", width: 4, decimals: 0, placeholder: "none", min: win ? win.min : null, max: win ? win.max : null, source: win ? win.source : "", onCommit: (v) => capCommit(inst, id, v) });
     f.el.dataset.cap = id;
     const info = row.whyRow.firstChild;
     if (row.capWhy && row.capWhy.parentNode) row.capWhy.remove();
@@ -535,8 +558,9 @@ function syncWhyRow(inst, id) {
   row.whyRow.hidden = row.info.hidden && (!row.capWhy || row.capWhy.hidden);
 }
 
-function paintKind(inst, kind, draft, tuneLock) {
+function paintKind(inst, kind, draft, tuneLock, caps = {}, capsRead = {}) {
   const k = inst.kinds[kind];
+  k.line.textContent = turboLine(inst.model, draft, kind, caps, capsRead);
   const cur = D.turboCur(inst.model, kind);
   const eff = D.turboEff(inst.model, draft, kind);
   let dirty = 0;

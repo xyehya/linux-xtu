@@ -3,9 +3,9 @@
 // POINT band (oc.js). P and E selected together are two sections (their points differ); the ring is its own section without an OC band (D-045). Sections are
 // built when the selection or the read changes and only refreshed afterwards, so a field keeps its focus and its refusal while the draft changes.
 import { h, clear } from "../../components/dom.js";
-import { aggregate, sections, fusedTopOf, stockMaxOf, unitLabel, favoredIds, aboveTop, ocClass } from "../../lib/units.js";
+import { sections, unitLabel, favoredIds, aboveTop, ocClass } from "../../lib/units.js";
 import { effRatio } from "../../lib/draft.js";
-import { isNum, TIMES } from "../../lib/format.js";
+import { TIMES } from "../../lib/format.js";
 import { createCurveSection } from "./curve-editor.js";
 import { createOcBand } from "./oc.js";
 
@@ -28,21 +28,14 @@ export function selectionTitle(model, ids) {
 }
 
 /**
- * The facts line of a selection as parts: [text | {b: value}] joined with " · " (DESIGN §5.9 `.lx-ihead`): cpu, factory top, max ratio, OC state, favored for
- * one P-core; the CPU range, one ratio one curve, factory top and the boot ratio for an E-cluster; the point count for the ring; the unit list for several.
+ * The facts line of a selection as parts: [text | {b: value}] joined with " · " (DESIGN §5.9 `.lx-ihead`): cpu, favored, OC state for one P-core; the CPU range, one ratio one curve and the OC state for an E-cluster;
+ * the point count for the ring; the unit count for several. The top ratio is in the unit list, not repeated here (G-251).
  */
 export function selectionFacts(model, draft, ids) {
   const live = ids.filter((id) => model.units[id]);
   if (!live.length) return [];
   const fav = favoredIds(model);
-  if (live.length > 1) {
-    const us = live.map((id) => model.units[id]).filter((u) => u.kind !== "R");
-    const ft = aggregate(us.map(fusedTopOf));
-    const out = [[{ b: String(live.length) }, " units"]];
-    if (ft.state === "same") out.push(["factory top ", { b: ft.value + TIMES }]);
-    else if (ft.state === "mixed") out.push(["factory top ", { b: ft.min + "–" + ft.max + TIMES }]);
-    return out;
-  }
+  if (live.length > 1) return [[{ b: String(live.length) }, " units"]]; // each unit's top ratio is in the unit list
   const u = model.units[live[0]];
   if (u.kind === "R") return [["cache and ring fabric"], [{ b: String(u.points.length) }, " points, by number"], ["OC word never written"]];
   const out = [];
@@ -52,14 +45,11 @@ export function selectionFacts(model, draft, ids) {
   const ocFact = cls === "oc" ? ["OC point ", { b: r + TIMES }] : cls === "middle" ? ["OC ratio ", { b: r + TIMES }, " on a factory point"] : ab ? ["runs ", { b: ab.max + TIMES }, " (set at boot), no OC point"] : ["no OC point"];
   if (u.kind === "P") {
     out.push(["cpu ", { b: String(u.cpu) }]);
-    if (isNum(fusedTopOf(u))) out.push(["factory top ", { b: fusedTopOf(u) + TIMES }]);
-    if (isNum(stockMaxOf(u))) out.push(["max ratio ", { b: (isNum(u.favored) ? u.favored : stockMaxOf(u)) + TIMES }]);
-    out.push(ocFact);
     if (fav.includes(u.id)) out.push(["favored"]);
+    out.push(ocFact);
   } else {
     out.push(["cpus ", { b: u.cpus[0] + "–" + u.cpus[u.cpus.length - 1] }]);
     out.push([{ b: String(u.cpus.length) }, " CPUs, one ratio, one curve"]);
-    if (isNum(fusedTopOf(u))) out.push(["factory top ", { b: fusedTopOf(u) + TIMES }]);
     out.push(ocFact);
   }
   return out;

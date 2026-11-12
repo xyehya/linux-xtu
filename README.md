@@ -38,8 +38,8 @@ Tested on a Core Ultra 9 285K (ASRock Z890, Fedora, GNOME Wayland). It writes un
 | *Tune › Cores: every V/F point with its factory voltage, offset and resulting voltage.* | *An edit predicts the new voltage and stays cyan until the CPU holds it.* |
 | ![Review sheet: one write, before and after, the effect and how to undo it](docs/img/review.png) | ![The system confirmation dialog listing the write, with Cancel and a red Apply](docs/img/confirm.png) |
 | *Review: every write with its before and after, and how to undo it.* | *A system dialog, outside the web view, lists every value before anything is written.* |
-| ![Tune › Frequency: max, OC and turbo ratios and caps per unit, and the P-core and E-core turbo tables](docs/img/tune-frequency.png) | ![Tune › Power: PL1, PL2, tau and PL4 with the values at boot and a live package-power plot](docs/img/tune-power.png) |
-| *Frequency: what limits each core's ratio, and the turbo tables.* | *Power: PL1 / PL2 / tau with their boot values; Restore boot values undoes them.* |
+| ![Tune › Frequency: each unit's top ratio, cap and clock, and the P-core and E-core turbo tables with what each busy-core count allows](docs/img/tune-frequency.png) | ![Tune › Power: PL1, PL2, tau and PL4 with the values at boot and whether each binds now](docs/img/tune-power.png) |
+| *Frequency: each core's top ratio and cap; the turbo tables are ceilings by busy-core count.* | *Power: PL1 / PL2 / tau, their boot values and whether they bind; PL4 read-only.* |
 | ![Stress: a one-minute CPU screen running on all 12 units at 5.5 / 4.7 GHz, package power and temperature plots](docs/img/stress.png) | ![Curves: a measured V/F curve of P0](docs/img/curves.png) |
 | *Stress: a quick screen of the state the CPU holds now, tied to that state.* | *Curves: measure what each core asks for at each ratio.* |
 | ![Profiles: the accepted state, the Windows apply command, the saved profiles and their contents](docs/img/profiles.png) | ![Audit: every operation the helper ran, grouped, with each request and its result](docs/img/audit.png) |

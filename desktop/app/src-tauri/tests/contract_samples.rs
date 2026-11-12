@@ -553,7 +553,7 @@ fn the_confirmation_contract_holds() {
     assert_eq!(c["wire_apply"]["args"]["intent"], c["intent"], "and the intent the page holds now");
     assert_eq!(c["dialog"]["ok_label"], "Apply 9 writes");
     let text = c["dialog"]["secondary"].as_str().unwrap();
-    for line in ["↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V", "P0 · point 5 · 53× · offset 0 → −19.5 mV", "turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54", "• Power limits — 1 write: PL1 250 → 200 W"] {
+    for line in ["↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V", "P0 · point 5 · 53× · offset 0 → −19.5 mV", "turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54", "• PL1 250 → 200 W"] {
         assert!(text.contains(line), "the dialog names {line:?}:\n{text}");
     }
     for (k, code) in [("not_confirmed", "NOT_CONFIRMED"), ("step2_from_page", "BAD_REQUEST"), ("no_code", "BAD_REQUEST")] {

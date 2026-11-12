@@ -9,7 +9,8 @@ import { MINUS } from "../lib/format.js";
 import { buildIntent } from "../lib/intent.js";
 import { WHY } from "../lib/hints.js";
 import { MISSING_HINT_KEYS } from "../lib/limits.js";
-import { unitFace, tileFace, liveFace } from "../views/tune/grid.js";
+import { unitFace, tileFace } from "../views/tune/grid.js";
+import { liveFace } from "../lib/live.js";
 import { curveRows, sectionCurve, sectionLock, offsetRange, rowDelta, plotModel, readoutParts, plannedMv, planCurve, planPoint, largeStep, whyVars, mvText, NO_BASELINE } from "../views/tune/curve-editor.js";
 import { ocInfo, offsetUnits, ocPointNo, ocAboveTable, ocShown, ocFlags } from "../views/tune/oc.js";
 import { selectionTitle, selectionFacts, factsText } from "../views/tune/inspector.js";
@@ -24,13 +25,14 @@ const secOf = (ids) => sections(m, ids)[0];
 const BASE = baselineFromRecord({ units: { P0: { points: [8, 20, 30, 48, 53, 55, 56, 57].map((r, i) => ({ ratio: r, status: "ok", vid_v: 0.9 + i * 0.05 })) } } });
 
 // ---- the unit table's rows ----
-test("units: top, OC (an OC point, or a ratio the BIOS set above the factory top), the deepest EFFECTIVE offset, edits", () => {
+test("units: one top ratio (the unit's own ceiling: P1 55 not 57; an OC / boot-set ratio marked with the fused value), the deepest EFFECTIVE offset, edits", () => {
   const p0 = unitFace(m, emptyDraft(), "P0");
-  assert.deepEqual([p0.top, p0.oc.ratio, p0.deepest, p0.edited], [57, null, 0, false]);
+  assert.deepEqual([p0.top, p0.topOc, p0.deepest, p0.edited], [57, false, 0, false]);
+  assert.equal(unitFace(m, emptyDraft(), "P1").top, 55, "a core that is not favored tops out at its own max ratio");
   const ec0 = unitFace(m, emptyDraft(), "EC0");
-  assert.deepEqual([ec0.top, ec0.oc.ratio, ec0.oc.boot, ec0.oc.edited], [46, 48, true, false], "EC0 runs 48x set at boot over a 46x factory top: shown, not an edit");
+  assert.deepEqual([ec0.top, ec0.topOc, ec0.topFused, ec0.topEdited], [48, true, 46, false], "EC0 runs 48x set at boot over a 46x factory top: shown as OC, not an edit");
   const ring = unitFace(m, emptyDraft(), "ring");
-  assert.deepEqual([ring.kind, ring.top, ring.oc.ratio], ["R", 39, null], "the ring's top is its highest point below the OC slot; its OC word is never written (D-045)");
+  assert.deepEqual([ring.kind, ring.top, ring.topOc], ["R", 39, false], "the ring's top is its highest point below the OC slot; its OC word is never written (D-045)");
   // whole curve + point add: −10 on the curve and −20 on 48x make −30 there (R-B4)
   let d = editCurve(m, emptyDraft(), ["P0"], -10).draft;
   assert.equal(unitFace(m, d, "P0").deepest, S(-10), "QA-04: as the CPU will hold it");
@@ -38,7 +40,7 @@ test("units: top, OC (an OC point, or a ratio the BIOS set above the factory top
   assert.equal(unitFace(m, d, "P0").deepest, S(-10) + S(-20));
   assert.equal(unitFace(m, d, "P0", diff(m, d).perUnit).edited, true);
   const oc = unitFace(m, setOcRatio(m, emptyDraft(), ["P1"], 58), "P1");
-  assert.deepEqual([oc.oc.ratio, oc.oc.edited], [58, true]);
+  assert.deepEqual([oc.top, oc.topOc, oc.topFused, oc.topEdited], [58, true, 55, true]);
   assert.equal(tileFace(m, d, "P0").deepest, S(-10) + S(-20), "the pre-R-S1 name stays for apply.test.mjs");
 });
 
@@ -143,11 +145,11 @@ test("plot: volts with a baseline (x = ratio to scale), the after trace only wit
   let p = plotModel(curveRows(m, emptyDraft(), secOf(["P0"]), BASE));
   assert.equal(p.mode, "volt");
   assert.deepEqual(p.x, { min: 0, max: 60, ticks: [10, 20, 30, 40, 50, 60] });
-  assert.deepEqual(p.traces.map((t) => t.kind), ["base", "meas"]);
+  assert.deepEqual(p.traces.map((t) => t.kind), ["base"], "G-251: no offsets on the unit, so the now line would sit on the factory line: only factory is drawn");
   assert.deepEqual(p.cursorXs, [8, 20, 30, 48, 53, 55, 56, 57]);
   const d = setPoint(m, emptyDraft(), ["P0"], 48, -20);
   p = plotModel(curveRows(m, d, secOf(["P0"]), BASE));
-  assert.deepEqual(p.traces.map((t) => t.kind), ["base", "meas", "set"]);
+  assert.deepEqual(p.traces.map((t) => t.kind), ["base", "set"], "the unit holds no offsets yet: now = factory, so only factory and your edit are drawn");
   assert.deepEqual(p.markers.filter((k) => k.kind === "set").map((k) => k.x), [48]);
   assert.deepEqual(readoutParts(p, 48), ["48×", ["factory", "1.050"], ["now", "1.050"], ["after", "1.030", "V"]]);
   const mv = plotModel(curveRows(m, d, secOf(["P0"]), null));
@@ -209,15 +211,15 @@ test("oc: flags — a target below the top point is lifted; the line to the OC r
 });
 
 // ---- inspector heading ----
-test("inspector: the heading is the unit; the facts line says cpu, factory top, max ratio, OC state, favored; an E-cluster is one unit of four CPUs", () => {
+test("inspector: the heading is the unit; the facts line says cpu, favored, OC state (the top ratio is in the unit list); an E-cluster is one unit of four CPUs", () => {
   assert.equal(selectionTitle(m, ["P0"]), "P0");
   assert.equal(selectionTitle(m, ["ring"]), "Ring");
   assert.equal(selectionTitle(m, ["P0", "P3"]), "P0, P3");
   assert.equal(selectionTitle(m, quickSelections(m).P), "all 8 P-cores");
   assert.equal(selectionTitle(m, []), "Nothing selected");
-  assert.equal(factsText(selectionFacts(m, emptyDraft(), ["P0"])), "cpu 0 · factory top 57× · max ratio 57× · no OC point · favored");
-  assert.equal(factsText(selectionFacts(m, emptyDraft(), ["EC0"])), "cpus 8–11 · 4 CPUs, one ratio, one curve · factory top 46× · runs 48× (set at boot), no OC point");
-  assert.equal(factsText(selectionFacts(m, setOcRatio(m, emptyDraft(), ["P1"], 58), ["P1"])), "cpu 1 · factory top 57× · max ratio 55× · OC point 58×");
+  assert.equal(factsText(selectionFacts(m, emptyDraft(), ["P0"])), "cpu 0 · favored · no OC point");
+  assert.equal(factsText(selectionFacts(m, emptyDraft(), ["EC0"])), "cpus 8–11 · 4 CPUs, one ratio, one curve · runs 48× (set at boot), no OC point");
+  assert.equal(factsText(selectionFacts(m, setOcRatio(m, emptyDraft(), ["P1"], 58), ["P1"])), "cpu 1 · OC point 58×");
   assert.match(factsText(selectionFacts(m, emptyDraft(), ["ring"])), /9 points, by number/);
   assert.deepEqual(favoredIds(m), ["P0", "P3"]);
 });

@@ -139,7 +139,8 @@ test("bootRestoreLine: nothing when the helper sends no field; 'off' with the en
   for (const state of ["disarmed", "not_installed"]) {
     const l = P.bootRestoreLine({ boot_restore: { state, note: "n" } });
     assert.equal(l.on, false);
-    assert.equal(l.text + l.cmd, "Boot restore: off \u2014 sudo systemctl enable linux-xtu-restore.timer && sudo /usr/lib/linux-xtu/linux-xtu-restore arm", "R2-07: one command that enables AND arms");
+    assert.equal(l.text, "Boot restore: off", "G-252: the line says the state only");
+    assert.equal(l.cmd, "sudo systemctl enable linux-xtu-restore.timer && sudo /usr/lib/linux-xtu/linux-xtu-restore arm", "R2-07: one command that enables AND arms (the button copies it)");
   }
   assert.equal(P.bootRestoreLine({ boot_restore: { state: "armed" } }).text, "Boot restore: on");
   assert.equal(P.bootRestoreLine({ boot_restore: "disarmed" }).on, false);
@@ -153,9 +154,14 @@ test("Profiles accepted panel shows the boot-restore line from the preflight; sa
   assert.equal(await until(() => $(none.root, "[data-pr=boot-restore]") === null), true);
   setPreflight(none.store, { ...none.store.get().preflight, boot_restore: { state: "disarmed", note: "timer installed, not enabled" } });
   assert.equal(await until(() => !!$(none.root, "[data-pr=boot-restore]")), true);
-  assert.equal(text($(none.root, "[data-pr=boot-restore]")), "Boot restore: off \u2014 sudo systemctl enable linux-xtu-restore.timer && sudo /usr/lib/linux-xtu/linux-xtu-restore arm");
+  assert.equal(text($(none.root, "[data-pr=boot-restore]")), "Boot restore: off");
+  assert.doesNotMatch(text($(none.root, "#pr-accepted")), /sudo systemctl/, "G-252: the raw command is not shown");
+  const btn = $(none.root, "[data-pr=boot-enable]");
+  assert.equal(text(btn), "Enable boot restore…");
+  assert.ok(!$(none.root, "details[data-pr=windows-details]").open, "G-252: the Windows apply steps are a disclosure, closed");
   setPreflight(none.store, { ...none.store.get().preflight, boot_restore: { state: "armed" } });
   assert.equal(await until(() => text($(none.root, "[data-pr=boot-restore]")) === "Boot restore: on"), true);
+  assert.equal($(none.root, "[data-pr=boot-enable]"), null, "no button once it is on");
   none.view.unmount();
 });
 
@@ -185,11 +191,15 @@ test("Accept shows the evidence of the same state, and 'Evidence is from a diffe
 });
 
 // ---------------------------------------------------------------- Stress: QA-23 text, QA-21 time
-test("testedText: the fingerprint is shown short, marked when it is the state now; records without it say 'state not recorded'", () => {
+test("testedText (G-252): 'accepted state' / 'the state now' / 'another state', the hash in a tooltip; records without it say 'state not recorded'", () => {
   assert.equal(ST.testedText({}), "state not recorded");
-  assert.equal(ST.testedText({ state_fingerprint: "0123456789abcdef" }), "state 01234567");
-  assert.equal(ST.testedText({ state_fingerprint: "0123456789abcdef" }, "0123456789abcdef"), "state 01234567 \u00b7 the state now");
-  assert.equal(ST.testedText({ state_fingerprint: "0123456789abcdef" }, "ffff"), "state 01234567 \u00b7 changed since");
+  const r = { state_fingerprint: "0123456789abcdef" };
+  assert.equal(ST.testedText(r), "state recorded");
+  assert.equal(ST.testedText(r, "0123456789abcdef"), "the state now");
+  assert.equal(ST.testedText(r, "0123456789abcdef", true), "accepted state");
+  assert.equal(ST.testedText(r, "ffff", true), "another state");
+  assert.equal(ST.testedTitle(r), "state 01234567");
+  assert.equal(ST.testedTitle({}), "");
   assert.equal(ST.testedText({ state_fingerprint: null }), "state unknown (no read yet)");
 });
 

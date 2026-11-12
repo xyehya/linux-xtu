@@ -1,4 +1,4 @@
-// G-243 (QA-35): System shows the helper's boot_restore state from the preflight, with the enable command when it is off. Fake DOM, no helper.
+// G-243 (QA-35): System no longer shows the boot_restore state or its command (G-252: Profiles is the one place); it links to Profiles when the helper reports one. Fake DOM, no helper.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { install, text } from "./fakedom.mjs";
@@ -21,7 +21,7 @@ test("the fixture preflight carries boot_restore {state, note}, as the helper se
   assert.equal(typeof br.note, "string");
 });
 
-test("the System screen shows the disarmed state with the enable command", async () => {
+test("G-252: the System screen has no boot-restore panel; it links to Profiles (the one place for the state and the enable command), and only when the helper reports one", async () => {
   const { createAppStore, setLink, setPreflight } = await import("../store.js");
   const { createWorkHead } = await import("../components/workhead.js");
   const store = createAppStore();
@@ -35,10 +35,16 @@ test("the System screen shows the disarmed state with the enable command", async
   const { createMockTransport } = await import("../fixtures/mock-backend.js");
   const bridge = new Bridge(createMockTransport({ intervalMs: 5, stepMs: 1, applyMode: null, profiles: null, accept: null, fingerprint: null, confirmMs: 1 }), "mock");
   const view = SY.systemView();
-  view.mount(root, { store, bridge, toast: () => {}, head: createWorkHead(headEl), goto: () => {}, drawer: null });
-  const boot = root.querySelector("#sys-boot");
-  assert.equal(boot.hidden, false);
-  assert.match(text(boot), /Boot restore:\s*disarmed/);
-  assert.match(text(boot), /sudo systemctl enable linux-xtu-restore\.timer/);
+  const gone = [];
+  view.mount(root, { store, bridge, toast: () => {}, head: createWorkHead(headEl), goto: (s, t) => gone.push([s, t]), drawer: null });
+  assert.equal(root.querySelector("#sys-boot"), null, "no boot-restore panel");
+  assert.doesNotMatch(text(root), /sudo systemctl enable/, "the enable command is not repeated here");
+  const go = root.querySelector("#sys-boot-go");
+  assert.equal(go.parentNode.hidden, false, "the link is shown");
+  go.click();
+  assert.deepEqual(gone.pop(), ["profiles", undefined]);
+  const { boot_restore: _b, ...none } = store.get().preflight;
+  setPreflight(store, none);
+  assert.equal(root.querySelector("#sys-boot-go").parentNode.hidden, true, "nothing to link to without the helper's field");
   view.unmount();
 });

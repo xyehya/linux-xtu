@@ -37,7 +37,8 @@ const BOOT_ARM_CMD = "sudo /usr/lib/linux-xtu/linux-xtu-restore arm";
 export const BOOT_ENABLE_CMD = `${BOOT_TIMER_CMD} && ${BOOT_ARM_CMD}`;
 /**
  * G-244 (QA-35): the Profiles line about boot restore, from the helper's optional preflight field `boot_restore` ({state: not_installed | disarmed | armed, note}, or the state as a
- * string). null when the helper sends none (say nothing). -> {state, on, text, cmd}: "Boot restore: off — <BOOT_ENABLE_CMD>" unless armed ("Boot restore: on").
+ * string). null when the helper sends none (say nothing). -> {state, on, text, cmd}: "Boot restore: off" unless armed ("Boot restore: on"); `cmd` = the command that turns it on, which the
+ * "Enable boot restore…" button copies (G-252: the raw sudo line is not shown).
  * G-249 (R2-07): with the helper's additive `timer` / `armed` the two halves are told apart: timer on + disarmed -> only the arm command; armed + timer off -> only the enable command.
  */
 export function bootRestoreLine(pre) {
@@ -47,9 +48,9 @@ export function bootRestoreLine(pre) {
   if (state === "armed") return { state, on: true, text: "Boot restore: on", cmd: "" };
   const timer = isObj(b) ? b.timer : undefined;
   const armed = isObj(b) ? b.armed : undefined;
-  if (timer === "enabled" && armed === "no") return { state, on: false, text: "Boot restore: timer on, not armed \u2014 ", cmd: BOOT_ARM_CMD };
-  if (armed === "yes" && (timer === "disabled" || timer === "masked")) return { state, on: false, text: "Boot restore: armed, timer off \u2014 ", cmd: BOOT_TIMER_CMD };
-  return { state, on: false, text: "Boot restore: off \u2014 ", cmd: BOOT_ENABLE_CMD };
+  if (timer === "enabled" && armed === "no") return { state, on: false, text: "Boot restore: timer on, not armed", cmd: BOOT_ARM_CMD };
+  if (armed === "yes" && (timer === "disabled" || timer === "masked")) return { state, on: false, text: "Boot restore: armed, timer off", cmd: BOOT_TIMER_CMD };
+  return { state, on: false, text: "Boot restore: off", cmd: BOOT_ENABLE_CMD };
 }
 
 export const NO_ACCEPTED_TEXT = "No accepted state yet: save a profile as accepted (Profiles)";
@@ -459,7 +460,7 @@ export function absentNote(contents, key) {
   return (v2 && (RUNTIME_KEYS.includes(key) || key === "ring") ? "Not captured" : "Not in this profile") + " · left as the CPU has it";
 }
 
-/** A unit row's two offset layers as text: {curve, points} ("—" = the layer is not set). */
+/** A unit row's two offset layers as text: {curve, points} ("—" = the layer is not set; a whole-curve offset of 0 is not set). */
 export function rowLayers(r) {
   const l = isObj(r.layers) ? r.layers : null;
   let curve = null;
@@ -471,7 +472,7 @@ export function rowLayers(r) {
     if (r.offset.kind === "curve") curve = r.offset.mv;
     else if (r.offset.kind === "points") pts = r.offset.mv;
   }
-  return { curve: isNum(curve) ? fmtMv(curve) : NOT_APPLICABLE, points: pts ? offsetShort({ kind: "points", mv: pts }) : NOT_APPLICABLE };
+  return { curve: isNum(curve) && curve !== 0 ? fmtMv(curve) : NOT_APPLICABLE, points: pts ? offsetShort({ kind: "points", mv: pts }) : NOT_APPLICABLE };
 }
 
 /**
@@ -489,7 +490,8 @@ export function profileSections(contents) {
       continue;
     }
     if (key === "rows") {
-      out.push({ key, title, state: "set", kind: "units", rows: rowsOf(c).map((r) => ({ unit: String(r.target), ...rowLayers(r), ocRatio: ratioText(r.ratio), ocV: isNum(r.v_target_v) ? fmtV(r.v_target_v) : NOT_APPLICABLE })) });
+      const urows = rowsOf(c).map((r) => ({ unit: String(r.target), ...rowLayers(r), ocRatio: ratioText(r.ratio), ocV: isNum(r.v_target_v) ? fmtV(r.v_target_v) : NOT_APPLICABLE }));
+      out.push({ key, title, state: "set", kind: "units", rows: urows, hasCurve: urows.some((r) => r.curve !== NOT_APPLICABLE) }); // G-252: no "Whole curve 0 mV" column when no unit has a whole-curve offset
     } else if (key === "turbo") {
       out.push({ key, title, state: "set", kind: "kv", rows: ["P", "E"].filter((k) => Array.isArray(v[k])).map((k) => [k + "-cores", v[k].join(" ") + " " + TIMES, true]) });
     } else if (key === "ring") {
@@ -540,13 +542,31 @@ export function listCells(info) {
   };
 }
 
-/** The compare choices: the accepted state (when there is one), the CPU now (the last read), and every saved profile. */
+/** The compare choices: the accepted state (when there is one), the CPU now (the last read), and every saved profile. G-252: the accepted state and the saved profile it was made from are ONE state, listed once. */
 export function compareRefs(list) {
   const out = [];
-  if (list.some((p) => p.source === "accepted")) out.push({ value: "accepted", label: "Accepted state" });
+  const rows = listRows(list);
+  if (rows.some((p) => p.source === "accepted")) out.push({ value: "accepted", label: "Accepted state" });
   out.push({ value: "read", label: "CPU now (last read)" });
-  for (const n of [...new Set(list.filter((p) => p.source !== "accepted").map((p) => p.name))]) out.push({ value: n, label: n });
+  for (const n of [...new Set(rows.filter((p) => p.source !== "accepted").map((p) => p.name))]) out.push({ value: n, label: n });
   return out;
+}
+
+/** G-252: the compare reference a list row stands for: the accepted row and its saved twin are both "accepted"; any other row is its own name. */
+export function refOf(list, name, source) {
+  if (source === "accepted") return "accepted";
+  return list.some((p) => p.source === "accepted" && p.chain !== true && p.name === name) ? "accepted" : name;
+}
+
+/** G-252: the compare choice to start from: `a` = the selected row, else the accepted state, else the newest saved profile; `b` = "CPU now", never the same as `a`. */
+export function compareDefaults(list, selected = null, selectedSource = null) {
+  const vals = compareRefs(list).map((r) => r.value);
+  const saved = listRows(list).filter((p) => p.source !== "accepted");
+  const newest = saved.slice().sort((x, y) => (String(y.created || "") < String(x.created || "") ? -1 : String(y.created || "") > String(x.created || "") ? 1 : 0))[0];
+  let a = selected ? refOf(list, selected, selectedSource) : null;
+  if (!a || a === "read" || !vals.includes(a)) a = vals.includes("accepted") ? "accepted" : newest ? newest.name : vals.find((v) => v !== "read") || "read";
+  const b = a !== "read" ? "read" : vals.find((v) => v !== "read") || "read";
+  return { a, b };
 }
 
 /**
@@ -689,18 +709,22 @@ export function profilesView() {
       const fingerState = h("span", { class: "lx-pr-finger", dataset: { pr: "finger-state" }, role: "status" });
       const winQ = createQ("profile.windows");
       const winEl = h("div", { class: "lx-pr-win", dataset: { pr: "windows" } },
-        h("div", { class: "lx-pr-win-h" }, h("span", { class: "lx-band-t", text: "Apply on Windows" }), h("span", { class: "lx-term", text: "Apply-Profile.ps1" }), winQ.button),
+        h("div", { class: "lx-pr-win-h" }, h("span", { class: "lx-term", text: "Apply-Profile.ps1" }), winQ.button),
         winQ.more,
         h("ol", { class: "lx-pr-steps" }, ...WINDOWS_STEPS.map((t) => h("li", { text: t }))),
         h("pre", { class: "lx-box lx-mono lx-pr-cmd", dataset: { pr: "command" }, "aria-label": "Windows command", text: windowsCommand() }),
         h("div", { class: "lx-pr-act" }, fingerBtn, copyBtn, fingerState));
 
+      // G-252: the Windows apply steps are a disclosure, closed by default (they matter once, when the accepted state is taken to Windows)
+      const winDetails = h("details", { class: "lx-notes lx-pr-windetails", dataset: { pr: "windows-details" }, open: false }, h("summary", { text: "Apply on Windows" }), winEl);
+      let bootNote = ""; // the feedback of the last "Enable boot restore…" click
+
       // ---- the library
       const listBody = h("tbody", { dataset: { pr: "list" } });
       const listTable = h("table", { class: "lx-tbl lx-tbl--fill lx-pr-list", "aria-label": "Profiles" },
         h("thead", {}, h("tr", {},
-          h("th", { scope: "col", text: "Name" }), h("th", { scope: "col", text: "Tags" }), h("th", { scope: "col", class: "lx-wide", text: "Saved" }), h("th", { scope: "col", class: "lx-n", text: "Units" }),
-          h("th", { scope: "col", class: "lx-n" }, "Deepest", h("span", { class: "lx-hu", text: "mV" })), h("th", { scope: "col", text: "Turbo" }), h("th", { scope: "col", class: "lx-n lx-wide", text: "Ring pts" }),
+          h("th", { scope: "col", text: "Name" }), h("th", { scope: "col", text: "Tags" }), h("th", { scope: "col", class: "lx-wide", text: "Saved" }),
+          h("th", { scope: "col", class: "lx-n" }, "Deepest", h("span", { class: "lx-hu", text: "mV" })), h("th", { scope: "col", text: "Turbo" }),
           h("th", { scope: "col", text: "Runtime" }))), listBody);
       const listFoot = h("div", { class: "lx-tfoot-note", dataset: { pr: "list-note" } });
       const listHolder = h("div", {});
@@ -774,8 +798,12 @@ export function profilesView() {
           const sum = info ? summaryText(info.summary) : S.info[p.name] ? "contents unavailable" : "reading…";
           const boot = bootRestoreLine(st.preflight);
           accBody.append(h("div", { class: "lx-pr-accline" }, h("span", { class: "lx-pr-sum", text: sum }), h("span", { class: "lx-pr-hint", text: HINTS["state.restore"].line }),
-            boot ? h("span", { class: "lx-pr-boot", dataset: { pr: "boot-restore", state: boot.state }, text: boot.text }, boot.cmd ? h("code", { class: "lx-mono", text: boot.cmd }) : null) : null));
-          accBody.append(winEl);
+            boot ? h("span", { class: "lx-pr-boot", dataset: { pr: "boot-restore", state: boot.state }, text: boot.text }) : null));
+          if (boot && boot.cmd) {
+            const bootBtn = button({ level: 2, label: "Enable boot restore…", hint: "profile.bootrestore", title: "Copies the command that turns boot restore on; you run it in a terminal (it needs sudo).", attrs: { "data-pr": "boot-enable" }, onClick: () => void copyBoot(boot.cmd) });
+            accBody.append(h("div", { class: "lx-pr-act lx-pr-bootrow" }, bootBtn, h("span", { class: "lx-pr-hint", dataset: { pr: "boot-note" }, role: "status", text: bootNote })));
+          }
+          accBody.append(winDetails);
         }
         accBody.append(askEl, noticeEl);
       }
@@ -820,10 +848,8 @@ export function profilesView() {
             h("td", { class: "lx-k lx-mono", text: p.name }),
             h("td", { class: "lx-pr-tags" }, ...rowTags(p, info)),
             h("td", { class: "lx-wide lx-mono", text: fmtCreated(p.created).replace(" UTC", "") || NOT_APPLICABLE }),
-            h("td", { class: "lx-n", text: info ? cells.units : S.info[p.name] ? "n/a" : "…" }),
-            h("td", { class: "lx-n", text: cells.deepest }),
+            h("td", { class: "lx-n", text: info ? cells.deepest : S.info[p.name] ? "n/a" : "…" }),
             h("td", { class: "lx-mono", text: cells.turbo }),
-            h("td", { class: "lx-n lx-wide", text: cells.ring }),
             h("td", { class: info && /^not /.test(cells.runtime) ? "lx-pr-absent" : "", text: info ? cells.runtime : NOT_APPLICABLE }));
           const pick = () => select(p.name, p.source);
           tr.addEventListener("click", pick);
@@ -844,7 +870,7 @@ export function profilesView() {
       function select(name, source) {
         S.selected = name;
         S.selectedSource = source;
-        S.cmpA = name;
+        S.cmpA = refOf(S.list, name, source); // the accepted row and its saved twin are one state
         renderList();
         renderContents();
         renderCompareSelects();
@@ -871,7 +897,7 @@ export function profilesView() {
           body.append(h("p", { class: "lx-pr-pad lx-pr-hint", text: S.list.length ? "Pick a profile in the list above." : "Nothing to show yet." }));
           return;
         }
-        contP.setMeta([h("span", { class: "lx-mono", text: name }), isAcc ? " · accepted" : ""]);
+        contP.setMeta([h("span", { class: "lx-mono", text: name })]); // G-252: "accepted" is said once, by the tag in the list
         if (!info) {
           body.append(h("p", { class: "lx-pr-pad lx-pr-hint", text: S.info[name] ? "Contents unavailable: " + S.info[name].error : "Reading the contents…" }));
           return;
@@ -881,9 +907,9 @@ export function profilesView() {
           const secEl = h("section", { class: "lx-pr-sec", dataset: { section: sec.key, sectionState: sec.state } }, head);
           if (sec.kind === "units" && sec.rows.length) {
             const tb = h("tbody");
-            for (const r of sec.rows) tb.append(h("tr", { dataset: { unit: r.unit } }, h("td", { class: "lx-k", text: r.unit }), h("td", { class: "lx-n", text: r.curve }), h("td", { class: "lx-mono lx-pr-pts", text: r.points }), h("td", { class: "lx-n", text: r.ocRatio }), h("td", { class: "lx-n", text: r.ocV })));
+            for (const r of sec.rows) tb.append(h("tr", { dataset: { unit: r.unit } }, h("td", { class: "lx-k", text: r.unit }), sec.hasCurve ? h("td", { class: "lx-n", text: r.curve }) : null, h("td", { class: "lx-mono lx-pr-pts", text: r.points }), h("td", { class: "lx-n", text: r.ocRatio }), h("td", { class: "lx-n", text: r.ocV })));
             secEl.append(h("table", { class: "lx-tbl lx-tbl--fill lx-tbl--compact", "aria-label": sec.title },
-              h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "Unit" }), h("th", { scope: "col", class: "lx-n" }, "Whole curve", h("span", { class: "lx-hu", text: "mV" })), h("th", { scope: "col", text: "Points" }), h("th", { scope: "col", class: "lx-n", text: "OC ×" }), h("th", { scope: "col", class: "lx-n", text: "OC V" }))), tb));
+              h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "Unit" }), sec.hasCurve ? h("th", { scope: "col", class: "lx-n" }, "Whole curve", h("span", { class: "lx-hu", text: "mV" })) : null, h("th", { scope: "col", text: "Points" }), h("th", { scope: "col", class: "lx-n", text: "OC ×" }), h("th", { scope: "col", class: "lx-n", text: "OC V" }))), tb));
           } else if (sec.rows.length) {
             const dl = h("dl", { class: "lx-kv lx-pr-kv" });
             for (const [k, v, mono, tip] of sec.rows) dl.append(h("dt", { text: k }), h("dd", { class: mono ? "lx-mono" : "", text: v, title: tip || undefined }));
@@ -897,8 +923,11 @@ export function profilesView() {
       function renderCompareSelects() {
         const refs = compareRefs(S.list);
         const vals = refs.map((r) => r.value);
-        if (!vals.includes(S.cmpA)) S.cmpA = S.selected && vals.includes(S.selected) ? S.selected : vals.find((v) => v !== "accepted" && v !== "read") || vals[0];
-        if (!vals.includes(S.cmpB) || S.cmpB === S.cmpA) S.cmpB = vals.includes("accepted") && S.cmpA !== "accepted" ? "accepted" : S.cmpA !== "read" ? "read" : vals.find((v) => v !== S.cmpA) || S.cmpA;
+        const def = compareDefaults(S.list); // G-252: the accepted (or newest) profile against the CPU now, never a profile against itself; a click on a row compares that row
+        if (S.loaded && !S.error) { // before the list has arrived there is nothing to default to ("CPU now" alone would stick)
+          if (!vals.includes(S.cmpA)) S.cmpA = def.a;
+          if (!vals.includes(S.cmpB) || S.cmpB === S.cmpA) S.cmpB = S.cmpA !== "read" ? "read" : vals.find((v) => v !== "read") || S.cmpA;
+        }
         for (const [sel, v] of [[selA, S.cmpA], [selB, S.cmpB]]) {
           clear(sel);
           for (const r of refs) sel.append(h("option", { value: r.value, text: r.label }));
@@ -913,6 +942,10 @@ export function profilesView() {
         clear(body);
         const d = S.diff;
         if (!connected()) {
+          cmpP.setMeta("—");
+          return;
+        }
+        if (!S.cmpA || !S.cmpB) {
           cmpP.setMeta("—");
           return;
         }
@@ -1051,7 +1084,6 @@ export function profilesView() {
           const first = savedOrder(S.list).find((p) => p.source !== "accepted") || S.list[0];
           S.selected = first ? first.name : null;
           S.selectedSource = first ? first.source : null;
-          if (S.selected) S.cmpA = S.selected;
         }
         renderAll();
         void runDiff();
@@ -1237,6 +1269,13 @@ export function profilesView() {
         fingerState.textContent = S.finger.text;
         fingerState.dataset.kind = S.finger.kind;
         renderAccepted();
+      }
+      async function copyBoot(cmd) {
+        const res = await copyText(cmd);
+        if (!alive) return;
+        bootNote = res === "copied" ? "Command copied. Run it in a terminal; it asks for your password (sudo)." : "Could not copy the command.";
+        const note = accBody.querySelector("[data-pr=boot-note]");
+        if (note) note.textContent = bootNote;
       }
       async function copyCmd() {
         const res = await copyText(windowsCommand());

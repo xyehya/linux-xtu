@@ -573,7 +573,7 @@ test("R-S3: the mock answers the confirmation contract word for word (refusals b
   sameShape(yes, C.confirm.confirmed, "confirmed");
   assert.deepEqual({ ...yes.result, dialog: undefined }, { confirmed: true, plans: 1, writes: plan.writes, dialog: undefined });
   sameShape(yes.result.dialog, C.dialog, "the confirmed answer carries the dialog text");
-  assert.match(yes.result.dialog.secondary, /   P0 · point 5 · 53× · offset 0 → −19\.5 mV\n/, "the value, not just the unit");
+  assert.match(yes.result.dialog.secondary, /(^|\n)• P0 · point 5 · 53× · offset 0 → −19\.5 mV\n/, "the value, not just the unit");
   sameShape(await t.call("tune.apply", { plan_id: plan.plan_id }), C.apply.started, "sent");
   assert.deepEqual(strip(await t.call("tune.apply", { plan_id: plan.plan_id })), C.apply.spent);
   assert.deepEqual(strip(await t.call("profiles.accept", { plan_id: "6".repeat(64), typed: "CONFIRM Z9X8C7" })), C.accept.step2_from_page);
@@ -632,8 +632,10 @@ test("R-S3: through the Tauri transport the commit sheet never sends a code and 
 
 // ================================================================ R-I1: the dialog's values, the new arguments, the version handshake — mock and shell alike
 test("R-I1: the shell's dialog names every value (raises first, counted) and fails closed on a value it cannot name; the mock builds the same text", () => {
-  assert.match(C.dialog.secondary, /^• V\/F and ratio words — 8 writes \(\+1 if per-core voltage control is off\):\n   ↑ raises a voltage: 2 lines listed first\n   ↑ P2 · OC point · ratio unset → 58× · target unset → 1\.250 V\n/);
-  assert.ok(C.dialog.secondary.includes("   turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n"));
+  assert.match(C.dialog.secondary, /^↑ raises a voltage: 2 lines listed first\n• ↑ P2 · OC point · ratio unset → 58× · target unset → 1\.250 V\n/);
+  assert.ok(C.dialog.secondary.includes("• turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n"));
+  assert.match(C.dialog.secondary, /\n\nEach write is read back\. Undo: Restore accepted, or a cold boot\.$/, "G-252: one short closing line");
+  assert.doesNotMatch(C.dialog.secondary, /V\/F and ratio words|sent alone/, "G-252: no repeated label or paragraph");
   assert.equal(C.confirm.undescribed.error.code, "CONFIRM_UNAVAILABLE");
   assert.equal(C.confirm.undescribed.error.detail.writes_sent, 0);
   assert.equal(noWrites({ status: "failed", error: C.confirm.undescribed.error }), true);

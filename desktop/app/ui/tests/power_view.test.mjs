@@ -10,7 +10,7 @@ import { HINTS } from "../lib/hints.js";
 
 install();
 const P = await import("../views/tune/power.js");
-const { mount, unmount, bindsNow, liveTop, FIELDS } = P;
+const { mount, unmount, bindsByLimit, bindText, FIELDS } = P;
 const PW = G["power-read"].result;
 
 function host({ result = PW, writes = true, values = null } = {}) {
@@ -88,7 +88,7 @@ test("power: the register lock disables every field, says why once and shows the
   const v = host({ result: { ...PW, locked: true } });
   for (const f of FIELDS) assert.equal(field(v.el, f.key).dataset.state, "disabled");
   assert.ok(v.el.querySelector("[data-panel=limits] [data-why='locked.power_lock']"), "the reason, once");
-  assert.equal(v.el.querySelector("[data-panel=limits] .lx-band [data-locked]").textContent, "MSR 0x610 locked");
+  assert.equal(v.el.querySelector("[data-panel=limits] .lx-band [data-locked]").textContent, "Locked by the BIOS until reboot");
   unmount();
   const u = host({ result: { ...PW, cpu_limits: { ...PW.cpu_limits, power: { locked: null, pl_max_w: null, source: "not read" } } } });
   assert.equal(field(u.el, "pl1_w").dataset.state, "disabled");
@@ -102,7 +102,9 @@ test("power: the PL4 row shows MSR 0x601 in watts with its lock state; the footn
   assert.match(text(pl4), /425\s*W/);
   assert.equal(pl4.querySelector("[data-pl4]").dataset.pl4, "unlocked");
   assert.match(text(v.el.querySelector("[data-panel=limits] .lx-tfoot-note")), new RegExp(HINTS["power.pl4_copy"].line.replace(/[.()]/g, "\\$&")));
-  assert.match(text(v.el.querySelector("[data-panel=limits] .lx-tfoot-note")), /PL field max 4095 W/);
+  assert.match(text(v.el.querySelector("[data-panel=limits] .lx-tfoot-note")), /Max 4095 W/);
+  assert.match(text(v.el.querySelector("[data-panel=limits] .lx-tfoot-note")), /Base power 125 W \(not a limit\)/);
+  assert.doesNotMatch(text(v.el.querySelector("[data-panel=limits] .lx-tfoot-note")), /0x6\d\d/, "no register numbers in the footnote");
   unmount();
 });
 
@@ -115,15 +117,20 @@ test("power: Restore boot values… is gated (nothing journaled in the recorded 
   unmount();
 });
 
-test("power: live panel — binds now from the 0x64F model, the y range covers the limits", () => {
-  assert.equal(bindsNow(null), "n/a");
-  assert.equal(bindsNow({ state: "ok", active: [], groups: [] }), "none");
-  assert.equal(bindsNow({ state: "ok", active: [{ key: "pl1", duty: 0.3 }, { key: "pl2", duty: 0.1 }], groups: [] }), "PL1 30% · PL2 10%");
-  assert.equal(bindsNow({ state: "ok", active: [], groups: [{ key: "current", state: "yes", duty: 1, bits: [{ key: "other" }] }] }), "PL4 100%");
-  assert.ok(liveTop([55, null, 80], [250, 295, 425]) > 425);
-  assert.equal(liveTop([], []), 100);
+test("power: no live plot panel; binds now is a short status in each limit's row, from the 0x64F model", () => {
+  const b0 = bindsByLimit(null);
+  assert.deepEqual(b0, { known: false });
+  assert.equal(bindText(b0, "pl1"), "n/a");
+  const none = bindsByLimit({ state: "ok", active: [], groups: [] });
+  assert.equal(bindText(none, "pl1"), "Not binding");
+  const some = bindsByLimit({ state: "ok", active: [{ key: "pl1", duty: 0.3 }, { key: "pl2", duty: 0.1 }], groups: [] });
+  assert.deepEqual([bindText(some, "pl1"), bindText(some, "pl2"), bindText(some, "pl4")], ["Binding 30%", "Binding 10%", "Not binding"]);
+  assert.equal(bindText(bindsByLimit({ state: "ok", active: [], groups: [{ key: "current", state: "yes", duty: 1, bits: [{ key: "other" }] }] }), "pl4"), "Binding 100%");
   const v = host();
-  assert.ok(v.el.querySelector("[data-panel=live] [data-plot]"));
-  assert.equal(v.el.querySelector("[data-live=binds]").textContent, "n/a");
+  assert.equal(v.el.querySelector("[data-panel=live]"), null, "the live panel is gone");
+  assert.equal(v.el.querySelectorAll("[data-plot]").length, 0, "and its plot");
+  assert.equal(v.el.querySelectorAll("[data-panel]").length, 1, "the limits table has the width to itself");
+  for (const key of ["pl1_w", "pl2_w", "pl4"]) assert.equal(text(v.el.querySelector("tr[data-row=" + key + "]").children[5]), "n/a", key + ": no throttle reading yet");
+  assert.equal(text(v.el.querySelector("tr[data-row=tau_s]").children[5]), "—");
   unmount();
 });

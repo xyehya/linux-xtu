@@ -95,16 +95,6 @@
   row-gap: var(--s2);
 }
 
-.lx-sys-boot {
-  display: flex;
-  align-items: center;
-  gap: var(--s2);
-}
-
-.lx-sys-boot-k {
-  color: var(--fg2);
-}
-
 /* the limits table wraps instead of scrolling: a limit not read says why in its cell */
 #sys-limits td {
   height: auto;

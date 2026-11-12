@@ -1538,26 +1538,28 @@ export function itemOf(rec) {
     throw e;
   }
 }
-/** confirm.rs ConfirmRequest::text for plan items: {title, primary, secondary, ok_label}. */
+/** confirm.rs ConfirmRequest::text for plan items: {title, primary, secondary, ok_label}. G-252: one bullet per write line, the setup writes, then one short closing line. */
 export function dialogText(items) {
   const writes = items.reduce((n, i) => n + i.writes, 0);
   const lines = [];
   for (const i of items) {
     if (i.kind !== "tune") {
-      lines.push(`• ${i.label} — ${plural(i.writes, "write")}${i.targets.length ? ": " + i.targets.join(", ") : ""}`);
+      if (!i.targets.length) lines.push(`• ${i.label} — ${plural(i.writes, "write")}`);
+      else for (const t of i.targets) lines.push(`• ${t}`);
       continue;
     }
-    lines.push(`• ${i.label} — ${plural(i.writes, "write")}${i.conditional > 0 ? ` (+${i.conditional} if per-core voltage control is off)` : ""}:`);
-    if (i.raises > 0) lines.push(`   ${RAISE_MARK}raises a voltage: ${plural(i.raises, "line")} listed first`);
+    if (i.raises > 0) lines.push(`${RAISE_MARK}raises a voltage: ${plural(i.raises, "line")} listed first`);
     const cut = i.targets.length > MAX_TUNE_LINES;
     const shown = cut ? MAX_TUNE_LINES - 1 : i.targets.length;
-    for (const t of i.targets.slice(0, shown)) lines.push(`   ${t}`);
+    for (const t of i.targets.slice(0, shown)) lines.push(`• ${t}`);
     if (cut) {
       const hidden = Math.max(0, i.raises - shown);
-      lines.push(`   … and ${i.targets.length - shown} more${hidden > 0 ? ` (${hidden} of them raise a voltage)` : ""}, all listed in the review`);
+      lines.push(`• … and ${i.targets.length - shown} more${hidden > 0 ? ` (${hidden} of them raise a voltage)` : ""}, all listed in the review`);
     }
+    if (i.conditional > 0) lines.push(`• +${i.conditional} setup ${i.conditional === 1 ? "write" : "writes"} if per-core voltage control is off`);
   }
-  lines.push("", "Each write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.");
+  const tune = items.some((i) => i.kind === "tune");
+  lines.push("", `Each write is read back. Undo: Restore accepted, or a ${tune ? "cold boot" : "reboot"}.`);
   return { title: "Linux XTU: confirm", primary: `Apply ${plural(writes, "write")} to the CPU?`, secondary: lines.join("\n"), ok_label: `Apply ${plural(writes, "write")}` };
 }
 

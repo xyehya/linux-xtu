@@ -1,6 +1,6 @@
 // views/tune/ring.js: Tune › Ring & uncore (R-S2; desktop/DESIGN.md §9.5, assessment 03 U-24, WP-6). The ring clock range only:
-//   RING CLOCK RANGE  Minimum / Maximum (uncore min/max ratio: intel_uncore_frequency package_00_die_00 {min,max}_freq_khz, runtime) — In force · New value · Driver
-//                     (the driver's initial range at boot); a plain note that the NGU and D2D clocks are separate BIOS settings this tab never moves.
+//   RING CLOCK RANGE  Minimum / Maximum (uncore min/max ratio: intel_uncore_frequency package_00_die_00 {min,max}_freq_khz, runtime) — In force · New value · At boot
+//                     (the driver's initial range at boot); one line saying the ring clock only changes here (NGU and D2D are BIOS settings).
 //   RING NOW          the live ring clock from the helper's telemetry (`values.ring` {mhz, ratio}: sysfs current_freq_khz, else MSR 0x621 [6:0]; n/a with the reason
 //                     only when it cannot be read; QA-20) and a pointer to the ring's V/F offsets, which are
 //                     edited only in Tune › Cores (the Ring row): no ring V/F editor here.
@@ -12,7 +12,7 @@
 import { h, clear } from "../../components/dom.js";
 import { createField } from "../../components/field.js";
 import { createTable, fillCell } from "../../components/table.js";
-import { panel, box, kv } from "../../components/panel.js";
+import { panel, kv } from "../../components/panel.js";
 import { button } from "../../components/buttons.js";
 import { mark } from "../../components/ann.js";
 import { why, setWhy, label, createQ } from "../../components/help.js";
@@ -82,7 +82,7 @@ export function mount(el, ctx) {
     { key: "now", label: "In force", unit: TIMES, num: true },
     { key: "f", label: "New value", field: true },
     { key: "m", label: "", mark: true },
-    { key: "drv", label: "Driver", unit: TIMES, num: true, hint: "uncore.driver" },
+    { key: "drv", label: "At boot", unit: TIMES, num: true, hint: "uncore.driver" },
   ];
   const table = createTable({ columns: cols, label: "Ring clock range" });
   table.setRows(UNCORE.map((u) => ({ key: u.key, cells: {} })));
@@ -100,17 +100,16 @@ export function mount(el, ctx) {
   inst.err = why(null);
   const restore = restoreButton(store, "runtime");
   inst.restore = restore;
-  const ngu = box({ title: HINTS["uncore.separate"].label, body: h("p", { dataset: { hint: "uncore.separate" }, text: HINTS["uncore.separate"].line }) });
-  ngu.dataset.note = "ngu-d2d";
+  const ngu = h("p", { class: "lx-tfoot-note lx-unc-note", dataset: { note: "ngu-d2d", hint: "uncore.separate" }, text: HINTS["uncore.separate"].line });
   const lp = panel({
     title: "Ring clock range",
-    meta: h("span", {}, "uncore ratio · ", h("span", { class: "lx-mono", text: "intel_uncore_frequency" })),
     end: restore.el,
     body: [table.el, h("div", { class: "lx-rt-foot" }, inst.err), ngu],
     flush: true,
     id: "unc-range",
   });
   lp.el.dataset.panel = "range";
+  lp.band.el.firstChild.setAttribute("title", "Uncore ratio, intel_uncore_frequency driver"); // the driver name is a tooltip, not part of the screen
 
   // RING NOW: the live ring clock from the helper's telemetry (QA-20); the V/F offsets live in Cores
   const go = button({
@@ -253,6 +252,6 @@ function paint(inst) {
     whyRow.hidden = field.whyEl.hidden;
   }
   setWhy(inst.err, lock && lock.state === "disabled" ? lock.key : null, lock ? lock.vars : {});
-  inst.table.foot(win ? "Window " + win.min + "–" + win.max + TIMES + ": the driver’s initial range (initial_min/max_freq_khz) · " + HINTS["uncore.driver"].line : "");
+  inst.table.foot(win ? "Window " + win.min + "–" + win.max + TIMES + ": the range at boot. " + HINTS["uncore.driver"].line : "");
   inst.restore.update();
 }

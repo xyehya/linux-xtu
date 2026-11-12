@@ -58,7 +58,7 @@ export const SUBTAB_MODULES = {
 };
 export const NO_BASELINE_REASON = "no baseline curve (Curves → Measure)";
 /** What clears each tab's values (DESIGN.md §5.5 persistence tags); Frequency mixes mailbox, MSR and runtime values, so its tags sit per column (null here). */
-export const PERSIST = { cores: "Mailbox \u00b7 cold boot clears", turbo: null, power: "Runtime \u00b7 reboot clears", ring: "Runtime \u00b7 reboot clears" };
+export const PERSIST = { cores: "Lost at cold boot", turbo: null, power: "Runtime \u00b7 reboot clears", ring: "Runtime \u00b7 reboot clears" };
 
 // ---- the store slice ----------------------------------------------------------------------------------------------------------------------
 export const initialTune = () => ({

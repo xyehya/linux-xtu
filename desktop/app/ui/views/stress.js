@@ -299,20 +299,26 @@ export function resultWord(r) {
 
 export const NOT_RECORDED = "state not recorded";
 /**
- * The state a stored run tested (G-244, QA-23): the helper stores `state_fingerprint` with each run (the words the accepted state checks). `now` = the fingerprint of the state
- * the CPU holds now (stress.list's `state_fingerprint`): "state 3fa9c2d1 · the state now" / "state 3fa9c2d1 · changed since". A record without the key is older than the
- * fingerprint: "state not recorded". A null fingerprint: the run began before any read this boot.
+ * The state a stored run tested (G-244, QA-23; G-252 words): the helper stores `state_fingerprint` with each run (the words the accepted state checks). `now` = the fingerprint of the
+ * state the CPU holds now (stress.list's `state_fingerprint`); `accepted` = true when that state is the accepted one. A run on the state now says "accepted state" (when the CPU holds
+ * the accepted state) or "the state now"; a run on any other state says "another state". The hash is in testedTitle (a tooltip), not in the cell. A record without the key is older
+ * than the fingerprint: "state not recorded". A null fingerprint: the run began before any read this boot.
  */
-export function testedText(r, now = undefined) {
+export function testedText(r, now = undefined, accepted = false) {
   if (!isObj(r)) return NOT_RECORDED;
   const fp = r.state_fingerprint;
-  if (isStr(fp) && fp) return `state ${fp.slice(0, 8)}` + (isStr(now) && now ? (now === fp ? " · the state now" : " · changed since") : "");
+  if (isStr(fp) && fp) {
+    if (!isStr(now) || !now) return "state recorded";
+    return now === fp ? (accepted ? "accepted state" : "the state now") : "another state";
+  }
   if (fp === null) return "state unknown (no read yet)";
   const t = r.tuning_state ?? r.state_tested ?? null;
   if (isStr(t)) return t;
   if (isObj(t)) return [t.kind, t.name || t.hash || t.id].filter(isStr).join(" · ") || "recorded";
   return NOT_RECORDED;
 }
+/** The tooltip of a "State tested" cell: the short fingerprint ("state 3fa9c2d1"), "" for a record without one. */
+export const testedTitle = (r) => (isObj(r) && isStr(r.state_fingerprint) && r.state_fingerprint ? `state ${r.state_fingerprint.slice(0, 8)}` : "");
 
 /** "04:37" — the timer's mm:ss, zero-padded minutes (one large readout per screen). */
 export function timerText(s) {
@@ -696,8 +702,7 @@ export function stressView() {
         const pk = r && isNum(r.max_pkg_w) ? r.max_pkg_w : peaks.pkg;
         hotV.textContent = isNum(hot) ? `${hot.toFixed(0)} °C` : NA;
         pkgV.textContent = isNum(pk) ? `${pk.toFixed(0)} W` : NA;
-        const t = view.tested;
-        testingLine.textContent = t ? `Tests ${t.line}${t.edits ? ` · ${t.edits} ${t.edits === 1 ? "edit" : "edits"} not applied` : ""}` : running ? "Tested state not known (the run was started elsewhere)" : "";
+        testingLine.textContent = !view.tested && running ? "Tested state not known (the run was started elsewhere)" : ""; // G-252: what is tested is said once, in Setup
         for (const p of plots) {
           const spec = runPlotSpec(p.def, view.samples, of_);
           p.setSpec(spec);
@@ -740,12 +745,14 @@ export function stressView() {
       }
 
       let histSig = "";
+      const accNowFlag = () => { const a = store.get().accepted; return !!a && (a.kind === "matches" || a.kind === "equivalent"); }; // the state now is the accepted one
       function renderHistory() {
         const rows = view.list.map((r) => ({ r, row: historyRow(r, ids), word: resultWord(r) }));
         histP.setMeta(view.listProblem ? view.listProblem : !view.loaded ? "loading…" : `${rows.length} stored · newest first`);
         histTable.hidden = rows.length === 0;
         histEmpty.hidden = rows.length > 0 || !view.loaded;
-        const sig = JSON.stringify(rows.map((x) => [x.row, testedText(x.r, view.stateNow)]));
+        const accNow = accNowFlag();
+        const sig = JSON.stringify(rows.map((x) => [x.row, testedText(x.r, view.stateNow, accNow)]));
         if (sig === histSig) return;
         histSig = sig;
         clear(histBody).append(...rows.map(({ r, row, word }) => h("tr", { dataset: { id: row.id || "" } },
@@ -754,7 +761,7 @@ export function stressView() {
           h("td", { class: "lx-n", dataset: { result: row.errors > 0 ? "fault" : "" }, text: String(row.errors) }),
           h("td", { dataset: { result: word.kind } }, word.text, row.mce ? ` · ${row.mce}` : ""),
           h("td", { class: "lx-n", text: isNum(r.max_temp_c) ? r.max_temp_c.toFixed(0) : NA }), h("td", { class: "lx-n", text: isNum(r.max_pkg_w) ? r.max_pkg_w.toFixed(0) : NA }),
-          h("td", { class: [NOT_RECORDED, "state unknown (no read yet)"].includes(testedText(r)) || testedText(r, view.stateNow).endsWith("changed since") ? "lx-dim" : "", dataset: { tested: isStr(r.state_fingerprint) ? (r.state_fingerprint === view.stateNow ? "now" : "other") : "none" }, text: testedText(r, view.stateNow) }))));
+          h("td", { class: [NOT_RECORDED, "state unknown (no read yet)"].includes(testedText(r)) || testedText(r, view.stateNow, accNow) === "another state" ? "lx-dim" : "", title: testedTitle(r) || undefined, dataset: { tested: isStr(r.state_fingerprint) ? (r.state_fingerprint === view.stateNow ? "now" : "other") : "none" }, text: testedText(r, view.stateNow, accNow) }))));
       }
 
       function render() {

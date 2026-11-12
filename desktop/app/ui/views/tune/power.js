@@ -1,7 +1,7 @@
-// views/tune/power.js: Tune › Power (R-S2; desktop/DESIGN.md §9.4, assessment 03 WP-6). Two panels:
-//   PACKAGE POWER LIMITS  Long-term limit PL1 · Short-term limit PL2 · Time window tau (fields with steppers) · Peak limit PL4 (read only, MSR 0x601 in watts,
-//                         locked / unlocked; the powercap peak_power copy is not enforced, throttling.md §G) — In force · New value · At boot.
-//   LIVE                  package power now and over the last 60 samples against PL1 / PL2 / PL4 (reference lines), and which power limit binds now (0x64F).
+// views/tune/power.js: Tune › Power (R-S2; desktop/DESIGN.md §9.4, assessment 03 WP-6; G-251). One panel, full width:
+//   PACKAGE POWER LIMITS  Long-term limit PL1 · Short-term limit PL2 · Time window tau (fields with steppers) · Peak limit PL4 (read only, in watts,
+//                         locked / unlocked; the powercap peak_power copy is not enforced, throttling.md §G) — In force · New value · At boot · Binds now (which limit holds the
+//                         clocks down now, from the throttle model; the live package-power plot was dropped: Overview and the bottom bar show the same history).
 // Reads power.read (powercap files + MSR 0x610 lock / 0x614 info; plain reads, never the OC mailbox). Edits live in the runtime slice (lib/rtstate.js
 // `rt.edits.power`) and reach the CPU only through the pending row's Review and the commit sheet (kind "power": power.plan {pl1_w?, pl2_w?, tau_s?}).
 // PL1 above PL2 is refused in the field (refused.power_order, the typed text kept); the helper refuses it at plan time too (REFUSED POWER_ORDER, whose
@@ -13,7 +13,6 @@ import { createTable, fillCell } from "../../components/table.js";
 import { panel } from "../../components/panel.js";
 import { mark } from "../../components/ann.js";
 import { why, setWhy, label, createQ } from "../../components/help.js";
-import { createPlot, niceTicks } from "../../components/plot.js";
 import { isNum } from "../../lib/format.js";
 import { HINTS } from "../../lib/hints.js";
 import { ensureRt, editRt, powerCurrent, powerDisagrees, powerDisabledReason } from "../../lib/rtstate.js";
@@ -27,8 +26,6 @@ export const FIELDS = [
   { key: "pl2_w", hint: "power.pl2", unit: "W", width: 5, decimals: 0, step: 1, big: 10 },
   { key: "tau_s", hint: "power.tau", unit: "s", width: 6, decimals: 1, step: 1, big: 10 },
 ];
-/** Live history shown: the last N telemetry samples. */
-export const LIVE_SAMPLES = 60;
 
 // ---------------------------------------------------------------- pure (node-tested)
 
@@ -54,23 +51,24 @@ export function pl4Display(values) {
   return { text: (Number.isInteger(w) ? String(w) : w.toFixed(3)) + " W · " + (r.value.locked ? "locked" : "unlocked"), watts: w, note: "", locked: !!r.value.locked };
 }
 
-/** "PL1 30%" / "PL1 30% · PL2 10%" / "PL4" / "none" / "n/a" from the store's throttle model: which power limit holds the clocks down now. */
-export function bindsNow(thr) {
-  if (!thr || thr.state !== "ok") return "n/a";
-  const out = [];
-  const pct = (d) => (isNum(d) ? " " + Math.round(d * 100) + "%" : "");
-  for (const b of thr.active || []) {
-    if (b.key === "pl1" || b.key === "pl2") out.push(b.key.toUpperCase() + pct(b.duty));
-  }
+/**
+ * Which power limit holds the clocks down now, per row of the table, from the store's throttle model (0x64F): {known, pl1, pl2, pl4} with a duty (0..1, or null when the share is unknown)
+ * for a limit that binds and `undefined` for one that does not. `known` false = n/a (no throttle reading).
+ */
+export function bindsByLimit(thr) {
+  if (!thr || thr.state !== "ok") return { known: false };
+  const out = { known: true };
+  for (const b of thr.active || []) if (b.key === "pl1" || b.key === "pl2") out[b.key] = isNum(b.duty) ? b.duty : null;
   const cur = (thr.groups || []).find((g) => g.key === "current");
-  if (cur && cur.state === "yes" && (cur.bits || []).some((b) => b.key === "other")) out.push("PL4" + pct(cur.duty));
-  return out.length ? out.join(" · ") : "none";
+  if (cur && cur.state === "yes" && (cur.bits || []).some((b) => b.key === "other")) out.pl4 = isNum(cur.duty) ? cur.duty : null;
+  return out;
 }
 
-/** The plot's y top: the highest of the limits and the samples, with room for the labels; null-safe. */
-export function liveTop(values, refs) {
-  const all = values.filter(isNum).concat(refs.filter(isNum));
-  return all.length ? Math.max(...all) * 1.08 : 100;
+/** The Binds now cell of a limit's row: "n/a" · "Not binding" · "Binding 30%" (the share of the last sampling window, when known). */
+export function bindText(binds, key) {
+  if (!binds || !binds.known) return "n/a";
+  if (!(key in binds) || binds[key] === undefined) return "Not binding";
+  return "Binding" + (isNum(binds[key]) ? " " + Math.round(binds[key] * 100) + "%" : "");
 }
 
 const fmt = (v, d) => (isNum(v) ? (d ? v.toFixed(d) : String(Math.round(v))) : null);
@@ -96,6 +94,7 @@ export function mount(el, ctx) {
     { key: "f", label: "New value", field: true },
     { key: "m", label: "", mark: true },
     { key: "boot", label: "At boot", num: true },
+    { key: "bind", label: "Binds now", hint: "power.binds" },
   ];
   const table = createTable({ columns: cols, label: "Package power limits" });
   table.setRows([...FIELDS.map((f) => ({ key: f.key, cells: {} })), { key: "pl4", cells: {} }]);
@@ -124,42 +123,7 @@ export function mount(el, ctx) {
   const lp = panel({ title: "Package power limits", meta, end: restore.el, body: [table.el, h("div", { class: "lx-rt-foot" }, inst.err)], flush: true, id: "pwr-limits" });
   lp.el.dataset.panel = "limits";
 
-  // LIVE
-  const nowV = h("span", { class: "lx-pwr-now-v", dataset: { live: "pkg" }, text: "—" });
-  const binds = h("span", { class: "lx-mono", dataset: { live: "binds" }, text: "n/a" });
-  const yOpts = { min: 0, max: 100, fmt: String, title: "W" };
-  const plot = createPlot({
-    label: "Package power over the last " + LIVE_SAMPLES + " samples against the power limits",
-    height: 200,
-    margin: { l: 40, r: 12, t: 20, b: 30 },
-    x: { min: -(LIVE_SAMPLES - 1), max: 0, ticks: [-45, -30, -15, 0], fmt: (t) => (t === 0 ? "now" : String(t)), title: "samples" },
-    y: yOpts,
-    readout: (x) => {
-      const hist = liveHistory(store);
-      const v = hist[hist.length - 1 + x];
-      return isNum(v) ? [["PKG", v.toFixed(1), "W"]] : [["PKG", "n/a"]];
-    },
-  });
-  inst.plot = plot;
-  inst.yOpts = yOpts;
-  inst.nowV = nowV;
-  inst.binds = binds;
-  const legend = h("div", { class: "lx-legend" }, h("span", {}, h("i", { class: "lx-sw" }), "package"), h("span", {}, h("i", { class: "lx-sw lx-sw--ref" }), "limits in force"));
-  const rp = panel({
-    title: "Live",
-    meta: "package power",
-    body: [
-      h("div", { class: "lx-pwr-now", dataset: { hint: "power.live" } }, nowV, h("span", { class: "lx-pwr-now-u", text: "W" })),
-      h("div", { class: "lx-pwr-line", dataset: { hint: "power.binds" } }, h("span", { class: "lx-pwr-ro", text: "Binds now " }), binds),
-      plot.el,
-      legend,
-    ],
-    id: "pwr-live",
-  });
-  rp.el.classList.add("lx-pwr-live");
-  rp.el.dataset.panel = "live";
-
-  el.append(h("div", { class: ["lx-tiles", "lx-split-side", "lx-pwr"] }, lp.el, rp.el));
+  el.append(h("div", { class: ["lx-tiles", "lx-pwr"] }, lp.el));
 
   inst.disposers.push(store.watch((s) => s.rt, () => paint(inst)));
   inst.disposers.push(store.watch((s) => s.tune && s.tune.read && s.tune.read.state, () => paint(inst)));
@@ -172,7 +136,7 @@ export function mount(el, ctx) {
     }),
   );
   paint(inst);
-  paintTele(inst);
+  paintBinds(inst);
   const s = store.get();
   if (s.link.state === "connected" && s.rt.power.state !== "reading") void loadRead(store, bridge, "power"); // the journal of this boot may have changed since the last visit
 }
@@ -182,7 +146,6 @@ export function unmount() {
   if (!inst) return;
   V = null;
   for (const d of inst.disposers.splice(0)) d();
-  inst.plot.dispose();
   clear(inst.el);
   inst.el.classList.remove("lx-rt-host");
   delete inst.el.dataset.view;
@@ -236,9 +199,9 @@ function paint(inst) {
     else field.setState(pending ? "set" : "idle");
     whyRow.hidden = field.whyEl.hidden;
   }
-  // band: the lock state of MSR 0x610 (short); the fields' reason once, under the table (a band end with a long why would hide the meta)
+  // band: the lock state of the power limits (short); the fields' reason once, under the table (a band end with a long why would hide the meta)
   const lockedBit = result && result.locked === true ? true : cl && cl.power ? cl.power.locked : null;
-  inst.lockMeta.textContent = lockedBit === true ? "MSR 0x610 locked" : lockedBit === false ? "MSR 0x610 unlocked" : "";
+  inst.lockMeta.textContent = lockedBit === true ? "Locked by the BIOS until reboot" : lockedBit === false ? "Unlocked" : "";
   inst.lockMeta.dataset.locked = lockedBit === null ? "" : String(lockedBit);
   setWhy(inst.err, lock && lock.state === "disabled" ? lock.key : null, lock ? lock.vars : {});
   paintPl4(inst, result, cl);
@@ -289,8 +252,8 @@ function placeField(inst, e, max) {
 function footText(result, cl, pl4Note = "") {
   const parts = [];
   if (pl4Note) parts.push(pl4Note);
-  if (cl && cl.power && isNum(cl.power.plMaxW)) parts.push("PL field max " + Math.floor(cl.power.plMaxW) + " W (MSR 0x610)");
-  if (result && result.msr && result.msr.info && isNum(result.msr.info.tdp_w)) parts.push("base power " + result.msr.info.tdp_w + " W (MSR 0x614), not a ceiling");
+  if (cl && cl.power && isNum(cl.power.plMaxW)) parts.push("Max " + Math.floor(cl.power.plMaxW) + " W");
+  if (result && result.msr && result.msr.info && isNum(result.msr.info.tdp_w)) parts.push("Base power " + result.msr.info.tdp_w + " W (not a limit)");
   parts.push(HINTS["power.pl4_copy"].line);
   return parts.join(" · ");
 }
@@ -300,7 +263,7 @@ function paintTele(inst) {
   if (V !== inst) return;
   const result = inst.store.get().rt.power.result;
   paintPl4(inst, result, normCpuLimits(result ? result.cpu_limits : null));
-  paintLive(inst);
+  paintBinds(inst);
 }
 
 function paintPl4(inst, result, cl) {
@@ -314,31 +277,13 @@ function paintPl4(inst, result, cl) {
   inst.pl4.dataset.locked = p4.locked === null ? "" : String(p4.locked);
 }
 
-function liveHistory(store) {
-  const h_ = store.get().telemetry.history;
-  const arr = h_ && Array.isArray(h_.pkg_power) ? h_.pkg_power : [];
-  return arr.slice(-LIVE_SAMPLES);
-}
-
-/** The LIVE panel: repainted on telemetry ticks only (never the fields). */
-function paintLive(inst) {
+/** The Binds now cells: repainted on telemetry ticks only (never the fields). */
+function paintBinds(inst) {
   if (V !== inst) return;
-  const st = inst.store.get();
-  const hist = liveHistory(inst.store);
-  const last = hist.length ? hist[hist.length - 1] : null;
-  inst.nowV.textContent = isNum(last) ? last.toFixed(1) : "n/a";
-  inst.binds.textContent = bindsNow(st.telemetry.throttle);
-  const cur = powerCurrent(st.rt.power.result);
-  const pl4 = pl4Display(st.telemetry.values).watts;
-  const refs = [
-    { y: cur.pl1_w, label: "PL1 " + fmt(cur.pl1_w, 0) },
-    { y: cur.pl2_w, label: "PL2 " + fmt(cur.pl2_w, 0) },
-    { y: pl4, label: "PL4 " + fmt(pl4, 0) },
-  ].filter((r) => isNum(r.y));
-  const top = liveTop(hist, refs.map((r) => r.y));
-  inst.yOpts.max = top;
-  inst.yOpts.ticks = niceTicks(0, top, 4).filter((t) => t <= top);
-  const pts = [];
-  hist.forEach((v, i) => isNum(v) && pts.push([i - (hist.length - 1), v]));
-  inst.plot.draw({ traces: pts.length ? [{ kind: "meas", pts }] : [], refs, cursorXs: pts.map((p) => p[0]) });
+  const binds = bindsByLimit(inst.store.get().telemetry.throttle);
+  for (const [key, tr] of [["pl1", inst.fields.get("pl1_w").tr], ["pl2", inst.fields.get("pl2_w").tr], ["pl4", inst.pl4]]) {
+    const text = bindText(binds, key);
+    fillCell(tr.cells_.bind, text === "n/a" ? { text, na: true } : { text, v: text === "Not binding" ? "none" : null });
+  }
+  fillCell(inst.fields.get("tau_s").tr.cells_.bind, { text: "—", v: "none" });
 }

@@ -346,7 +346,7 @@ test("rampOf / spreadLabels / readoutParts / estimateCost / baselineAllowed", ()
   assert.deepEqual(spreadLabels([104, 100]), [113, 100], "order is kept per label");
   assert.deepEqual(spreadLabels([95, 96], 12, 0, 100), [88, 100], "pushed back inside the plot");
   const m = { ymode: "v", series: [{ key: "a", unit: "P0", pts: [{ mhz: 1000, v: 0.8 }, { mhz: 2000, v: 0.9 }] }] };
-  assert.deepEqual(readoutParts(m, 2000), [["", "2000 MHz · 20×"], ["P0", "0.900", "V"]]);
+  assert.deepEqual(readoutParts(m, 2000), [["", "20× · 2000 MHz"], ["P0", "0.900", "V"]]);
   const many = { ymode: "v", series: [0, 1, 2, 3, 4].map((i) => ({ key: `P${i}`, unit: `P${i}`, pts: [{ mhz: 1000, v: 0.8 + i / 100 }] })) };
   assert.deepEqual(readoutParts(many, 1000).map((p) => p[0]), ["", "max P4", "min P0", ""]);
   assert.equal(estimateCost("quick", 12), "~2 min");

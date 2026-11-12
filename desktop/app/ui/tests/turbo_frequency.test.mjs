@@ -1,4 +1,4 @@
-// node --test desktop/app/ui/tests/turbo_frequency.test.mjs   (R-S2: Tune › Frequency — Runs up to, turbo order refused in place, set all / fill right,
+// node --test desktop/app/ui/tests/turbo_frequency.test.mjs   (R-S2, G-251: Tune › Frequency — top ratio / cap / clock per unit, the computed turbo line, turbo order refused in place, set all / fill right,
 // ratio caps, the D-050 note; the explainRefusal remediation of the ordering refusals). Fake DOM (tests/fakedom.mjs), recorded simulator fixtures, no helper.
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -14,7 +14,7 @@ import { WHY } from "../lib/hints.js";
 
 install();
 const F = await import("../views/tune/frequency.js");
-const { runsUpTo, unitLimits, stepPoints, countsText, setAllBuckets, fillRight, bucketCounts, mount, unmount } = F;
+const { ratioAt, unitLimits, topText, groupText, turboLine, RULE, stepPoints, countsText, setAllBuckets, fillRight, bucketCounts, mount, unmount } = F;
 
 const READ = FIX["tune-read"].result;
 const RT_READ = G["runtime-read"].result;
@@ -48,24 +48,39 @@ const cell = (el, id, col) => text(row(el, id).querySelector(`td[data-col=${col}
 const colIndex = (el, col) => [...el.querySelector("[data-panel=limits] thead tr").children].findIndex((th) => th.dataset.col === col);
 
 // ---------------------------------------------------------------- pure
-test("frequency: Runs up to is the lowest limit; the binding one is named, ties go to the table, then the unit's own ceiling, then the cap", () => {
-  assert.deepEqual(runsUpTo({ ceiling: 57, t1: 57, tall: 55, cap: 57 }), { one: 57, all: 55, binds: "turbo table", bindsAll: "turbo table" });
-  assert.deepEqual(runsUpTo({ ceiling: 55, t1: 57, tall: 55, cap: 57 }), { one: 55, all: 55, binds: "max ratio", bindsAll: "turbo table" }, "QA-09: one busy is held by the max ratio, all busy by the table");
-  assert.deepEqual(runsUpTo({ ceiling: null, t1: 48, tall: 48, cap: 47 }), { one: 47, all: 47, binds: "ratio cap", bindsAll: "ratio cap" });
-  assert.deepEqual(runsUpTo({ ceiling: 58, ceilingName: "OC ratio", t1: 57, tall: 55, cap: null }), { one: 57, all: 55, binds: "turbo table", bindsAll: "turbo table" });
-  assert.deepEqual(runsUpTo({}), { one: null, all: null, binds: null, bindsAll: null });
+test("frequency: a core runs at the lowest of its top ratio, its cap and the turbo-table entry (null values are not limits)", () => {
+  assert.equal(ratioAt({ top: 57, cap: 57 }, 55), 55);
+  assert.equal(ratioAt({ top: 55, cap: 57 }, 57), 55, "a core whose own top is 55 never reaches a 57 table entry");
+  assert.equal(ratioAt({ top: 57, cap: 50 }, 57), 50);
+  assert.equal(ratioAt({ top: 58, cap: null }, 57), 57, "an OC ratio above the table stays capped by it (D-050)");
+  assert.equal(ratioAt({ top: null, cap: null }, null), null);
 });
 
-test("frequency: unitLimits per unit from the read, the draft and the caps; E-clusters have no max ratio, an OC ratio above the table stays capped (D-050)", () => {
+test("frequency: unitLimits — the top ratio is the unit's own ceiling (P1 55, favored P0 57, OC marked with the fused value); a cap shows only below the top", () => {
   const m = model();
   const p0 = unitLimits(m, emptyDraft(), "P0", {}, 57);
-  assert.deepEqual([p0.max, p0.oc, p0.t1, p0.tall, p0.one, p0.all, p0.binds], [57, null, 57, 55, 57, 55, "turbo table"]);
-  const p1 = unitLimits(m, emptyDraft(), "P1", {}, 55);
-  assert.deepEqual([p1.max, p1.one, p1.binds], [55, 55, "max ratio"]);
+  assert.deepEqual([p0.top, p0.topOc, p0.capShown], [57, false, null], "a cap at the top holds nothing back: the field says none");
+  const p1 = unitLimits(m, emptyDraft(), "P1", {}, 57);
+  assert.deepEqual([p1.top, p1.capShown], [55, null], "P1 is fused to 55, not 57");
+  assert.equal(unitLimits(m, emptyDraft(), "P1", {}, 50).capShown, 50, "a cap below the top is shown");
+  assert.deepEqual([unitLimits(m, emptyDraft(), "P1", { P1: 57 }, 50).capShown, unitLimits(m, emptyDraft(), "P1", { P1: 57 }, 50).capEdited], [57, true], "an edit is always shown");
   const ec = unitLimits(m, emptyDraft(), "EC1", { EC1: 46 }, 49);
-  assert.deepEqual([ec.max, ec.cap, ec.capEdited, ec.one, ec.all, ec.binds], [null, 46, true, 46, 46, "ratio cap"]);
+  assert.deepEqual([ec.top, ec.topOc, ec.topFused, ec.cap, ec.capEdited, ec.capShown], [48, true, 46, 46, true, 46], "E rows have a top ratio too (the BIOS runs 48× over a 46× fused top)");
+  assert.deepEqual(topText(ec), { n: "48×", oc: true, fused: "(fused 46×)" });
+  assert.deepEqual(topText(p1), { n: "55×", oc: false, fused: "" });
   const oc = unitLimits(m, setOcRatio(m, emptyDraft(), ["P1"], 58), "P1", {}, null);
-  assert.deepEqual([oc.oc, oc.ocEdited, oc.one, oc.binds], [58, true, 57, "turbo table"], "OC 58× runs up to the 57× table");
+  assert.deepEqual([oc.top, oc.topOc, oc.topFused, oc.topEdited], [58, true, 55, true]);
+});
+
+test("frequency: the computed turbo line groups units by what they really get (min rule) from the draft; one value for all is said once", () => {
+  const m = model();
+  assert.equal(turboLine(m, emptyDraft(), "P"), "1 busy: P0, P3 57× · others 55× — 8 busy: all 55×");
+  assert.equal(turboLine(m, emptyDraft(), "E"), "1 busy: 48× — 16 busy: 48×");
+  const d = setOcRatio(m, emptyDraft(), ["P1"], 58);
+  assert.equal(turboLine(m, d, "P", { P4: 50 }), "1 busy: P0, P1, P3 57× · P4 50× · others 55× — 8 busy: P4 50× · others 55×", "the OC ratio does not lift P1 above the table; a cap lowers P4");
+  const t = setAllBuckets(m, emptyDraft(), "P", 53);
+  assert.equal(turboLine(m, t.draft, "P"), "1 busy: all 53× — 8 busy: all 53×", "follows the draft table");
+  assert.equal(groupText([{ id: "EC0", v: 47 }, { id: "EC1", v: 46 }, { id: "EC2", v: 47 }, { id: "EC3", v: 47 }], "E"), "EC1 46× · others 47×");
 });
 
 test("frequency: the step chart uses the real busy-core axis (E buckets 1,2,3,4,6,8,12,16); counts text", () => {
@@ -104,21 +119,47 @@ test("refusals: TURBO_ORDER and POWER_ORDER plan refusals keep the helper's word
 });
 
 // ---------------------------------------------------------------- the view (fake DOM)
-test("frequency view: one ratio-limits row per unit with Runs up to and the binding limit; two turbo tables of eight fields; caps from runtime.read", () => {
+test("frequency view: one row per unit with Top ratio · Cap · Clock now only; the rule in one line; two turbo tables of eight fields with a computed line; caps from runtime.read", () => {
   const v = host();
   assert.equal(v.el.dataset.view, "frequency");
+  assert.deepEqual([...v.el.querySelector("[data-panel=limits] thead tr").children].map((th) => text(th)), ["Unit", "Top ratio", "Cap×", "", "Clock nowGHz"]);
+  assert.equal(text(v.el.querySelector("[data-panel=limits] .lx-band-m")), RULE);
   const rows = v.el.querySelectorAll("[data-panel=limits] tbody tr[data-row]");
   assert.deepEqual(rows.map((r) => r.dataset.row), ["P0", "P1", "P2", "P3", "P4", "P5", "P6", "P7", "EC0", "EC1", "EC2", "EC3"]);
-  assert.equal(row(v.el, "P0").dataset.binds, "turbo table");
-  assert.equal(row(v.el, "P1").dataset.binds, "max ratio");
+  assert.equal(cell(v.el, "P0", "top"), "57×");
+  assert.equal(cell(v.el, "P1", "top"), "55×", "not 57× on every P-core");
+  assert.match(cell(v.el, "EC0", "top"), /^48× OC \(fused 46×\)$/, "E rows show their ceiling, not —");
+  assert.equal(cell(v.el, "P0", "clk"), "n/a", "no telemetry yet");
   assert.equal(v.el.querySelectorAll("[data-panel=turbo]").length, 2);
   assert.equal(v.el.querySelectorAll("[data-panel=turbo][data-kind=P] [data-bucket]").length, 8);
   assert.deepEqual([0, 1, 2, 7].map((i) => bucket(v.el, "P", i).querySelector("input").value), ["57", "57", "55", "55"]);
+  assert.equal(text(v.el.querySelector("[data-panel=turbo][data-kind=P] [data-part=turbo-line]")), "1 busy: P0, P3 57× · others 55× — 8 busy: all 55×");
+  assert.equal(text(v.el.querySelector("[data-panel=turbo][data-kind=E] [data-part=turbo-line]")), "1 busy: 48× — 16 busy: 48×");
+  assert.equal(text(v.el.querySelector("[data-panel=turbo][data-kind=P] [data-part=turbo-note]")), "A ceiling by number of busy cores; no core goes above its own top ratio or cap.");
+  const bandTxt = (k) => text(v.el.querySelector("[data-panel=turbo][data-kind=" + k + "] .lx-band"));
+  assert.match(bandTxt("P"), /Lost at cold boot/i);
+  assert.doesNotMatch(bandTxt("P") + bandTxt("E"), /0x1AD|0x650|MSR/, "register numbers are a tooltip");
+  assert.match(v.el.querySelector("[data-panel=turbo][data-kind=P] .lx-band-t").getAttribute("title"), /0x1AD \/ 0x1AE/);
+  assert.match(v.el.querySelector("[data-panel=turbo][data-kind=E] .lx-band-t").getAttribute("title"), /0x650 \/ 0x651/);
   assert.equal(v.el.querySelectorAll("[data-cap]").length, 12, "a cap field per P-core and per E-cluster");
-  assert.equal(v.el.querySelector("[data-cap=P0] input").value, "57");
+  assert.equal(v.el.querySelector("[data-cap=P0] input").value, "", "a cap at the top ratio is no cap: the field is empty");
+  assert.equal(v.el.querySelector("[data-cap=P0] input").placeholder, "none");
   assert.equal(v.el.querySelectorAll("[data-plot]").length, 2);
+  assert.match(text(v.el.querySelector("[data-panel=limits] .lx-tfoot-note")), /^Cap range \d+–\d+×\. An E-cluster cap applies to its four CPUs\.$/);
   unmount();
   assert.equal(v.el.childNodes.length, 0);
+});
+
+test("frequency view: Clock now follows the telemetry (highest clock of the unit's CPUs); the turbo line follows the draft", () => {
+  const v = host();
+  const leaf = (value) => ({ value, unit: "MHz", status: "ok" });
+  v.store.update((s) => ({ telemetry: { ...s.telemetry, values: { cores: { 0: { mhz: leaf(5600) }, 8: { mhz: leaf(4600) }, 9: { mhz: leaf(4700) } } } } }));
+  assert.equal(cell(v.el, "P0", "clk"), "5.60");
+  assert.equal(cell(v.el, "EC0", "clk"), "4.70");
+  assert.equal(cell(v.el, "P1", "clk"), "n/a");
+  typeInto(bucket(v.el, "P", 0), "55");
+  assert.equal(text(v.el.querySelector("[data-panel=turbo][data-kind=P] [data-part=turbo-line]")), "1 busy: all 55× — 8 busy: all 55×");
+  unmount();
 });
 
 test("frequency view: a bucket above its left neighbour is refused in the field with its reason, the typed text kept, the draft untouched", () => {
@@ -174,7 +215,8 @@ test("frequency view: a cap edit goes to the runtime slice, the row marks the ed
   typeInto(v.el.querySelector("[data-cap=EC1]"), "46");
   assert.deepEqual(v.store.get().rt.edits.caps, { EC1: 46 });
   assert.equal(row(v.el, "EC1").dataset.state, "edit");
-  assert.equal(row(v.el, "EC1").dataset.binds, "ratio cap");
+  assert.equal(v.el.querySelector("[data-cap=EC1] input").value, "46", "an edited cap is shown");
+  assert.equal(text(v.el.querySelector("[data-panel=turbo][data-kind=E] [data-part=turbo-line]")), "1 busy: EC1 46× · others 48× — 16 busy: EC1 46× · others 48×");
   const p0 = v.el.querySelector("[data-cap=P0]");
   typeInto(p0, "99");
   await Promise.resolve(); // the why row follows its field after the event (a microtask)

@@ -276,7 +276,15 @@ export const HINTS = Object.freeze({
   "unit.top": {
     label: "Curve top",
     term: "factory top ratio",
-    line: "The highest ratio of the unit’s factory V/F curve; not what the core may run (Tune › Frequency › Max).",
+    line: "The highest ratio of the unit’s factory V/F curve; not what the core may run (see Top ratio in Tune › Frequency).",
+  },
+  "unit.topratio": {
+    label: "Top ratio",
+    unit: "×",
+    line: "The most this unit runs: its OC ratio if it has one, else its fused maximum. Cap and turbo table can hold it lower.",
+    more: ["Favored cores are fused to 57×, the other P-cores to 55×, E-clusters to 46×. An OC ratio (marked OC) replaces that ceiling."],
+    tip: "ratios",
+    src: "platform-arl-s.md §3, §8 (0x1C favored ratio, fused top); lib/units.js topRatio; D-050",
   },
 
   // ------------------------------------------------------------------ Tune › Cores: V/F table
@@ -381,20 +389,12 @@ export const HINTS = Object.freeze({
 
   // ------------------------------------------------------------------ Tune › Frequency
   "freq.effective": {
-    label: "Runs up to",
-    term: "effective max ratio",
+    label: "What a core runs at",
     unit: "×",
-    line: "The lowest of three limits: OC or max ratio, the turbo bucket for this many busy cores, and the ratio cap.",
+    line: "The lowest of the core’s top ratio, its ratio cap and the turbo-table entry for the number of busy cores.",
     more: ["Power and temperature limits can hold it lower still; the indicators in the bottom bar show when they do."],
     tip: "ratios",
-    src: "assessment 03 U-20",
-  },
-  "freq.maxratio": {
-    label: "Max ratio",
-    term: "0x1C favored ratio",
-    unit: "×",
-    line: "The ratio the core may run up to now; lower than the curve top on cores that are not favored. An OC ratio raises it.",
-    src: "registers.md (0x1C/0x1D); platform-arl-s.md §8",
+    src: "assessment 03 U-20; G-251",
   },
   "turbo.bucket": {
     label: "Busy cores",
@@ -412,7 +412,7 @@ export const HINTS = Object.freeze({
     label: "Ratio cap",
     term: "cpufreq max",
     unit: "×",
-    line: "An operating-system limit on this unit’s clock. A reboot removes it. E-clusters are capped as a whole.",
+    line: "An operating-system limit on this unit’s clock; empty means none. A reboot removes it. E-clusters are capped as a whole.",
     src: "platform-arl-s.md §3 (E cap per cluster, MEASURED)",
   },
 
@@ -458,47 +458,12 @@ export const HINTS = Object.freeze({
     src: "throttling.md §G, registers.md (0x601 = W) [MEASURED 2026-11-11]; D-053 rule 7",
   },
   "power.lock": {
-    label: "Locked",
-    term: "MSR 0x610 bit 63",
-    line: "The BIOS locked the power limits: they stay read-only until the next reset.",
-    src: "registers.md (0x610 lock)",
-  },
-  "power.live": {
-    label: "Package power",
-    unit: "W",
-    line: "What the package draws now, against the limits in force.",
+    label: "Locked by the BIOS",
+    line: "The power limits are read-only until the next reboot.",
+    src: "registers.md (MSR 0x610 bit 63, lock)",
   },
 
   // ------------------------------------------------------------------ R-S2: Tune › Frequency, Power, Ring & uncore (one block)
-  "freq.oc": {
-    label: "OC ratio",
-    term: "OC point",
-    unit: "×",
-    line: "The unit’s OC ratio, if it has one. It raises the unit’s own ceiling; the turbo table still caps it.",
-    tip: "ratios",
-    src: "D-050; platform-arl-s.md §3",
-  },
-  "freq.turbo_one": {
-    label: "Turbo, 1 busy",
-    term: "first bucket",
-    unit: "×",
-    line: "The turbo table’s ratio while one core is busy: the highest the table allows.",
-    tip: "ratios",
-    src: "platform-arl-s.md §7, §9",
-  },
-  "freq.turbo_all": {
-    label: "Turbo, all busy",
-    term: "last bucket",
-    unit: "×",
-    line: "The turbo table’s ratio while every core of this kind is busy.",
-    tip: "ratios",
-    src: "platform-arl-s.md §7, §9",
-  },
-  "freq.binds": {
-    label: "Binds",
-    line: "The limit that sets Runs up to, with one busy core and with all busy. Change that limit to move it.",
-    src: "assessment 03 U-20",
-  },
   "turbo.set_all": {
     label: "Set all",
     line: "Gives every bucket of this table the same ratio. Refused if the ratio is outside the CPU’s limits.",
@@ -525,7 +490,7 @@ export const HINTS = Object.freeze({
   "power.pl4_copy": {
     label: "PL4 copy",
     term: "powercap peak_power",
-    line: "The powercap peak_power copy of PL4 is not enforced on this chip. Only MSR 0x601 counts.",
+    line: "The powercap peak_power copy of PL4 is not enforced on this chip. Only the CPU’s own PL4 counts.",
     src: "throttling.md §G [MEASURED lnx 2026-11-11, one chip]",
   },
   "power.binds": {
@@ -536,15 +501,15 @@ export const HINTS = Object.freeze({
     src: "throttling.md §B; store.js deriveThrottle",
   },
   "uncore.driver": {
-    label: "Driver",
-    term: "initial range",
+    label: "At boot",
+    term: "driver’s initial range",
     unit: "×",
-    line: "The range the uncore driver started with at boot. A reboot brings it back.",
+    line: "The range the ring clock had at boot. A reboot brings it back.",
     src: "registers.md (0x620); intel_uncore_frequency initial_min/max_freq_khz",
   },
   "uncore.separate": {
     label: "NGU and D2D",
-    line: "Ring, NGU and D2D clocks are three separate settings, each with a BIOS value. This tab changes neither NGU nor D2D.",
+    line: "Changes the ring clock only; NGU and D2D clocks are set in the BIOS.",
     more: ["Whether the driver’s range also moves the NGU clock has not been measured."],
     src: "assessment PLAN.md operator facts (three independent settings, UNVERIFIED which is BIOS-only); registers.md 0x620 (ring vs NGU unknown)",
   },
@@ -633,7 +598,12 @@ export const HINTS = Object.freeze({
   "overview.clock": {
     label: "Clock",
     unit: "GHz",
-    line: "Mean clock of the unit’s CPUs in the last sample.",
+    line: "The unit’s clock in the last sample: its fastest CPU.",
+  },
+  "overview.top": {
+    label: "Top",
+    unit: "×",
+    line: "The highest ratio this core runs at: its OC ratio when one is set, else its fused maximum.",
   },
   "overview.busy": {
     label: "Busy",
@@ -673,7 +643,7 @@ export const HINTS = Object.freeze({
   },
   "overview.state": {
     label: "State",
-    line: "How the CPU compares with your accepted state, and the last quick screen.",
+    line: "The last quick screen, and where to run another.",
     tip: "stop",
   },
   "overview.memory": {
@@ -775,6 +745,11 @@ export const HINTS = Object.freeze({
     label: "Spread",
     line: "Shades the range between the lowest and highest unit at each frequency.",
   },
+  "curves.vid": {
+    label: "Requested voltage (VID)",
+    line: "The voltage the core asks for at each ratio. No sensor reports the voltage that actually reaches a core.",
+    src: "platform-arl-s.md §5",
+  },
   "curves.delta": {
     label: "Δ mV",
     line: "Plots the curve minus the compared curve in mV. Negative means the curve asks for less voltage.",
@@ -858,6 +833,11 @@ export const HINTS = Object.freeze({
     label: "Copy command",
     line: "Copies the command to the clipboard. The app never runs it.",
   },
+  "profile.bootrestore": {
+    label: "Enable boot restore",
+    line: "Copies the command that turns boot restore on (it needs sudo). The app never runs it. Once on, the accepted state is applied again at start-up.",
+    src: "D-053 §3; R-B6",
+  },
   "profile.empty": {
     label: "No profiles yet",
     line: "A profile is a complete saved state: every unit and point, and the tables and limits the helper captured.",
@@ -887,8 +867,8 @@ export const HINTS = Object.freeze({
     src: "D-049",
   },
   "system.helper": {
-    label: "Helper and link",
-    line: "The connection to the root helper and how many mailbox requests it sent this boot.",
+    label: "App",
+    line: "The version of this desktop app and the bridge it reaches the helper through. The helper link and the mailbox count are in the top bar.",
   },
   "system.version": {
     label: "App version",
@@ -924,7 +904,7 @@ export const HINTS = Object.freeze({
   },
   "system.bootrestore": {
     label: "Boot restore",
-    line: "Whether the packaged boot restore re-applies the accepted state at start-up, and whether it is armed.",
+    line: "Boot restore re-applies the accepted state at start-up once it is enabled. Its state and the command that enables it are on Profiles.",
     src: "D-053 §3; R-B6",
   },
   "audit.search": {

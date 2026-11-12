@@ -47,7 +47,22 @@
   grid-column: 1 / -1;
 }
 
-.lx-freq-binds {
+/* the Top ratio cell: the number, an OC mark, the fused value muted beside it */
+.lx-freq-oc {
+  color: var(--fg2);
+  font-size: var(--t-sm);
+}
+
+/* G-251: the turbo panels' note and computed line sit inside the 12 px body inset */
+.lx-freq-note,
+.lx-freq-line {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.lx-freq-line {
+  font-family: var(--mono);
+  font-size: var(--t-sm);
   color: var(--fg2);
 }
 
@@ -94,39 +109,14 @@
   margin-top: var(--s2);
 }
 
-/* ---------------------------------------------------------------- Power (grid: .lx-split-side) */
-.lx-pwr-live .lx-panel-b {
-  display: flex;
-  flex-direction: column;
-  gap: var(--s2);
-}
-
-.lx-pwr-now {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
-}
-
-.lx-pwr-now-v {
-  font-family: var(--mono);
-  font-size: var(--t-xl);
-  line-height: var(--lh-xl);
-  font-weight: var(--w-med);
-  color: var(--fg);
-}
-
-.lx-pwr-now-u {
-  font-family: var(--mono);
-  color: var(--fg3);
-}
-
+/* ---------------------------------------------------------------- Power (one panel, full width) */
 .lx-pwr-ro {
   color: var(--fg3);
   font-size: var(--t-sm);
 }
 
 /* ---------------------------------------------------------------- Ring & uncore (grid: .lx-split-side) */
-.lx-unc .lx-box {
+.lx-unc .lx-unc-note {
   margin: var(--s3);
 }
 
@@ -135,12 +125,6 @@
   margin-left: var(--s1);
   font-family: var(--mono);
   color: var(--fg3);
-}
-
-.lx-pwr-line {
-  display: flex;
-  align-items: baseline;
-  gap: var(--s2);
 }
 
 .lx-unc-vf {
@@ -160,7 +144,6 @@
 }
 
 @media (max-width: 1179px) {
-  .lx-pwr,
   .lx-unc {
     grid-template-columns: minmax(0, 1fr) 16.5rem;
   }

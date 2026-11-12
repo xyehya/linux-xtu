@@ -165,7 +165,7 @@ export function stepNote(draft, ids) {
     if (!d) continue;
     for (const typed of [...(isNum(d.curveMv) ? [d.curveMv] : []), ...Object.values(d.pts)]) {
       const held = snapOffsetMv(typed);
-      if (isNum(typed) && Math.abs(held - typed) >= 0.05) return "The CPU holds offsets in 1/1024 V steps: " + fmtMvNum(typed) + " mV is held as " + fmtMvNum(held) + " mV.";
+      if (isNum(typed) && Math.abs(held - typed) >= 0.05) return fmtMvNum(typed) + " mV is stored as " + fmtMvNum(held) + " mV (nearest 1/1024 V step).";
     }
   }
   return "";
@@ -207,7 +207,12 @@ export function plotModel(rows) {
   };
   const pending = rows.some((r) => r.pending);
   const pts = (which) => fused.map((r) => [r.ratio, val(r, which)]).filter((p) => isNum(p[1]));
-  const traces = [{ kind: "base", pts: pts("base") }, { kind: "meas", pts: pts("now") }];
+  const basePts = pts("base");
+  const nowPts = pts("now");
+  // G-251: a "now" line on top of the factory line says nothing: with no offset anywhere on the unit only the factory line is drawn
+  const nowIsBase = nowPts.length === basePts.length && nowPts.every((q, i) => q[0] === basePts[i][0] && Math.abs(q[1] - basePts[i][1]) < (volt ? 0.0005 : 0.05));
+  const traces = [{ kind: "base", pts: basePts }];
+  if (!nowIsBase) traces.push({ kind: "meas", pts: nowPts });
   if (pending) traces.push({ kind: "set", pts: pts("after") });
   const top = fused[fused.length - 1];
   if (volt && oc && top) {
@@ -433,14 +438,17 @@ export function createCurveSection(tc, section, { title = "", lockId = null } = 
 
   // the table
   const H = (text, unit, cls, hint) => h("th", { class: cls, scope: "col", dataset: hint ? { hint } : {} }, text, unit ? h("span", { class: "lx-hu", text: unit }) : null);
+  // After V and Δ say what an edit changes: shown only while the section holds a pending edit (G-251)
+  const thAfter = h("th", { class: "lx-n", scope: "col", dataset: { hint: "vf.after" } }, "After", h("span", { class: "lx-hu", text: "V" }), h("span", { class: "lx-clamp" }));
+  const thDelta = H("Δ", "mV", "lx-n", "vf.delta");
   const thead = h("thead", {}, h("tr", {},
     H("Pt", "", "lx-n"),
     H("Ratio", "", "lx-n"),
     H("Factory", "V", "lx-n", "vf.factory"),
     H("Offset", "mV", "lx-n lx-f", "vf.point.offset"),
     H("Now", "V", "lx-n", "vf.now"),
-    h("th", { class: "lx-n", scope: "col", dataset: { hint: "vf.after" } }, "After", h("span", { class: "lx-hu", text: "V" }), h("span", { class: "lx-clamp" })),
-    H("Δ", "mV", "lx-n", "vf.delta"),
+    thAfter,
+    thDelta,
   ));
   const tbody = h("tbody");
   const table = h("table", { class: ["lx-tbl", "lx-tbl--fill"], dataset: { vfTable: kind }, "aria-label": "V/F points, " + (ring ? "ring" : ids.join(", ")) }, thead, tbody);
@@ -517,7 +525,8 @@ export function createCurveSection(tc, section, { title = "", lockId = null } = 
   function paintLegend(p, plotted) {
     clear(legend);
     const sw = (cls, text) => h("span", {}, h("i", { class: cls }), text);
-    legend.append(sw("lx-sw lx-sw--base", p.mode === "volt" ? "factory" : "factory (0 mV)"), sw("lx-sw", "now"));
+    legend.append(sw("lx-sw lx-sw--base", p.mode === "volt" ? "factory" : "factory (0 mV)"));
+    if (p.traces.some((t) => t.kind === "meas")) legend.append(sw("lx-sw", "now"));
     if (p.pending) legend.append(sw("lx-sw lx-sw--set", "after your edits"));
     if (p.markers.some((k) => k.kind === "set")) legend.append(sw("lx-sw-mk lx-sw-mk--set", "edited point"));
     if (p.approx) legend.append(h("span", { dataset: { part: "approx" } }, h("i", { class: "lx-sw lx-sw--set lx-tune-sw-approx" }), "not measured"));
@@ -569,9 +578,14 @@ export function createCurveSection(tc, section, { title = "", lockId = null } = 
     whys.hidden = [lockWhy, noteWhy, probWhy, ...(curveField ? [curveField.whyEl] : [])].every((w) => w.hidden);
     // rows
     const e40 = kind === "E" && warnings(model, draft).some((w) => w.code === "E40_OFFSET" && ids.includes(w.unit)); // the E 40× point, one chip (lib/draft.js warnings)
+    const anyPending = rowsNow.some((r) => r.pending);
+    thAfter.hidden = !anyPending;
+    thDelta.hidden = !anyPending;
     for (const r of rowsNow) {
       const row = rowEls.get(r.key);
       const c = row.cells;
+      c.after.hidden = !anyPending;
+      c.delta.hidden = !anyPending;
       row.tr.querySelector("[data-part=pt]").textContent = String(r.point);
       row.tagEl.hidden = !(r.oc || r.ocSlot || !r.shared);
       row.tagEl.textContent = r.oc ? "OC " : r.ocSlot ? "OC slot " : !r.shared ? r.ids.length + "/" + ids.length + " " : "";
@@ -630,10 +644,12 @@ export function createCurveSection(tc, section, { title = "", lockId = null } = 
     foot.textContent = (ring
       ? "Ring: no factory or predicted voltages (no stock ring curve); offsets only."
       : bname && bs.kind === "derived"
-        ? "Factory V derived from the curve “" + bname + "” minus the offsets it was measured with (whole-curve + point); the top point is the CPU's own fused voltage, and a point the hardware clamp V(n) ≥ V(n−1) may have lifted is interpolated."
+        ? "Factory V = a measured curve minus the offsets it was measured with (“" + bname + "”)."
         : bname
           ? "Factory V: the top point from the CPU, the others from “" + bname + "”."
           : "Factory V: the top point from the CPU; the others n/a: " + (tc.baseReason() || NO_BASELINE) + ".") + (step ? " " + step : "");
+    if (!ring && bname && bs.kind === "derived") foot.setAttribute("title", "The top point is the CPU's own fused voltage; a point the hardware clamp V(n) ≥ V(n−1) may have lifted is interpolated.");
+    else foot.removeAttribute("title");
     // the plot: the first unit of the section
     const own = ids.length > 1 ? curveRows(model, draft, ring ? section : { ...section, ids: [one], ratios: model.units[one].points.map((p) => p.ratio) }, base, tc.baseReason()) : rowsNow;
     const p = plotModel(own);

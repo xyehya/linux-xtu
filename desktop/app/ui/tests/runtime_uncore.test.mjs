@@ -54,7 +54,9 @@ test("uncore: the tab holds the ring clock range only — two fields, no V/F edi
   assert.equal(v.el.querySelectorAll(".curve-editor, [data-section=ring-vf]").length, 0, "no ring V/F editor");
   const note = v.el.querySelector("[data-note=ngu-d2d]");
   assert.match(text(note), /NGU and D2D/);
-  assert.match(text(note), /changes neither NGU nor D2D/);
+  assert.equal(text(note), "Changes the ring clock only; NGU and D2D clocks are set in the BIOS.", "one line, not a box");
+  assert.deepEqual(v.el.querySelectorAll("[data-panel=range] thead th").map((n) => text(n)).slice(-1), ["At boot×"]);
+  assert.doesNotMatch(text(v.el.querySelector("[data-panel=range] .lx-band")), /intel_uncore_frequency/, "the driver name is a tooltip");
   assert.doesNotMatch(text(v.el.querySelector("[data-panel=range]")), /NGU (ratio|clock),? (minimum|maximum)/, "the range never claims NGU");
   v.el.querySelector("[data-action=open-ring-vf]").click();
   assert.deepEqual(calls, [["sel", ["ring"]], ["tab", "cores"]]);

@@ -60,7 +60,7 @@ test("Overview: the unit table with live columns, no tiles, no donut; heat is a 
   assert.equal(root.querySelectorAll("[data-series=pkg_power]").length, 1, "package power is a history plot, not a readout tile");
   assert.equal(root.querySelectorAll("circle").length, 0, "no donut");
   assert.equal(root.querySelectorAll("#ov-limits tr[data-limit]").length, 6);
-  assert.match(text(root.querySelector("#ov-mbx")), /this boot/);
+  assert.equal(root.querySelector("#ov-mbx"), null, "G-252: the mailbox count is the top bar's");
   assert.ok(heads.some((x) => x.end), "the window segmented sits in the work header");
   v.unmount();
   root.remove();
@@ -117,7 +117,8 @@ test("Stress: a run shows the timer and what it tests, then the result in plain 
   assert.equal(sum.dataset.result, "clean");
   assert.match(text(sum), /No errors detected/);
   assert.match(text(sum), /run a long self-checking test before you accept/);
-  assert.match(text(root.querySelector("#st-testing")), /^Tests what the CPU holds now \(read \d\d:\d\d:\d\d\) · = the accepted state/);
+  assert.match(text(root.querySelector("#st-tested")), /^what the CPU holds now \(read \d\d:\d\d:\d\d\) · = the accepted state/, "Setup says what is tested");
+  assert.equal(text(root.querySelector("#st-testing")), "", "G-252: Live does not say it again");
   assert.match(text(root.querySelector("#st-clock")), /^\d\d:\d\d$/);
   await until(() => root.querySelectorAll("#st-hist-body tr").length > 0);
   const first = root.querySelector("#st-hist-body tr");

@@ -249,6 +249,25 @@ export function runsUpTo(model, unit) {
   const sm = stockMaxOf(unit);
   return sm === null ? null : Math.min(t.ratios[0], Math.max(sm, unit.oc && isNum(unit.oc.ratio) ? unit.oc.ratio : 0));
 }
+/**
+ * G-251: the unit's own ceiling, one number for every screen (Tune › Frequency and Cores): the OC ratio when one is set (above the stock maximum), a ratio the BIOS set above the fused top
+ * (`boot`), else the fused max ratio (a P-core's 0x1C ratio capped at the fused top; an E-cluster's fused top; the ring's highest point). `ratio` = the unit's OC-word ratio as drafted
+ * (null = none). -> {ratio, oc, fused (the fused max ratio shown beside an OC top, else null), boot} | null (nothing read). A core runs at min(top, its cap, turbo table[busy cores]).
+ */
+export function topRatio(model, unit, ratio = null) {
+  if (!unit) return null;
+  if (unit.kind === "R") {
+    const rs = unit.points.filter((p) => !p.ocSlot).map((p) => p.ratio).filter(isNum);
+    return rs.length ? { ratio: Math.max(...rs), oc: false, fused: null, boot: false } : null;
+  }
+  const stock = stockMaxOf(unit) ?? fusedTopOf(unit);
+  const cls = ocClass(unit, ratio);
+  if (cls === "oc" || cls === "middle") return { ratio, oc: true, fused: isNum(stock) ? stock : null, boot: false };
+  const ab = aboveTop(model, unit, ratio);
+  if (ab) return { ratio: ab.max, oc: true, fused: isNum(stock) ? stock : null, boot: true };
+  return isNum(stock) ? { ratio: stock, oc: false, fused: null, boot: false } : null;
+}
+
 /** A unit that runs above its fused top with no OC point (the BIOS raised the max ratio / the E turbo table): {ft, max}, else null. */
 export function aboveTop(model, unit, ratio) {
   const ft = fusedTopOf(unit);

@@ -214,7 +214,8 @@ test("Tune › Cores: with NO marked baseline and only a tuned curve stored, Fac
   const cells = factoryCells(t.root, "P", [8, 20, 30, 48, 53, 55, 56, 57]);
   assert.ok(cells.every((c) => /^\d\.\d{3}$/.test(c)), "no n/a in P0's Factory column: " + cells.join(" "));
   const foot = text(t.root.querySelector("[data-foot='P']"));
-  assert.match(foot, /Factory V derived from the curve “Quick · Nov 12 15:20” minus the offsets it was measured with/);
+  assert.equal(foot, "Factory V = a measured curve minus the offsets it was measured with (“Quick · Nov 12 15:20”).");
+  assert.match(t.root.querySelector("[data-foot='P']").getAttribute("title"), /top point is the CPU's own fused voltage/, "the top-point note is the tooltip");
   assert.doesNotMatch(foot, /n\/a/);
   tune.patchTune(t.store, { selection: ["EC1"], anchor: "EC1" });
   const ecells = factoryCells(t.root, "E", [8, 15, 23, 30, 40, 46]);
@@ -257,16 +258,15 @@ test("baseTip: says where a factory voltage comes from (fused with the self-chec
 // ---- Ring row clock -------------------------------------------------------------------------------------------------------------------------------------
 const leaf = (value, unit) => ({ value, unit, source: "intel_uncore_frequency/package_00_die_00/current_freq_khz", status: "ok" });
 
-test("Tune › Cores › Units: the Ring row's Clock GHz is the live ring clock (telemetry values.ring), n/a only until it is reported", () => {
+test("Tune › Cores › Units: no Clock column (live clocks are on Overview); the Ring row keeps its top ratio and offset", () => {
   const model = modelFromRead(structuredClone(READ));
   const t = mount([]);
   tune.patchTune(t.store, { model, selection: ["P0"], anchor: "P0" });
-  const clock = () => text(t.root.querySelector("[data-unit-table] tr[data-unit='ring']").querySelector("[data-col='clk']"));
-  assert.equal(clock(), "n/a", "no telemetry yet");
+  const ring = t.root.querySelector("[data-unit-table] tr[data-unit='ring']");
+  assert.equal(ring.querySelector("[data-col='clk']"), null);
+  assert.equal(text(ring.querySelector("[data-col='top']")), "39");
   applyHelperEvent(t.store, "telemetry", { t: 1, values: { ring: { mhz: leaf(4100, "MHz"), ratio: leaf(41, "x") } } });
-  assert.equal(clock(), "4.10");
-  applyHelperEvent(t.store, "telemetry", { t: 2, values: { ring: { mhz: leaf(800, "MHz"), ratio: leaf(8, "x") } } });
-  assert.equal(clock(), "0.80", "follows each telemetry tick");
+  assert.equal(text(ring.querySelector("[data-col='top']")), "39", "a telemetry tick changes nothing in the list");
   assert.equal(ringNow({ ring: { mhz: leaf(4100, "MHz"), ratio: leaf(41, "x") } }).text, "41× · 4100 MHz", "the same helper the Ring & uncore tab uses");
 });
 

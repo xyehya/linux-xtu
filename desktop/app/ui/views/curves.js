@@ -13,7 +13,7 @@ import { createPlot, niceTicks } from "../components/plot.js";
 import { panel, box, emptyState, progressRule, setProgress } from "../components/panel.js";
 import { button, setButton, confirmInPlace } from "../components/buttons.js";
 import { tag } from "../components/ann.js";
-import { why, setWhy } from "../components/help.js";
+import { why, setWhy, createQ } from "../components/help.js";
 import { EMPTY } from "../lib/hints.js";
 import { isNum, fmtMv, MINUS, TIMES, fmtLocalDateTime, fmtLocalStamp } from "../lib/format.js";
 import { modelFromRead } from "../lib/units.js";
@@ -305,7 +305,7 @@ export function curvesModel(s) {
   return model;
 }
 
-/** The notes under the chart: {base, stock: {show, text, title}, unreach}. */
+/** The notes under the chart: {base, check, stock: {show, text, title}, unreach (both parts joined), unreachParts (one line each)}. */
 export function curveNotes({ a, list, live, baseline, drawn, ids, wordsRead, topChecks = [] }) {
   const isBase = !!a && a.id === baseline && !live;
   const baseRow = baseline ? list.find((c) => c.id === baseline) || null : null;
@@ -324,6 +324,7 @@ export function curveNotes({ a, list, live, baseline, drawn, ids, wordsRead, top
     check: checks.length ? "Top point check (derived − fused 0x09): " + checks.map((t) => `${t.unit} ${t.mv > 0 ? "+" : t.mv < 0 ? MINUS : ""}${Math.abs(t.mv).toFixed(1)} mV${t.clamped ? " (lifted by the clamp)" : ""}`).join(" · ") + "." : "",
     stock: { show: isStock, text: "stock = fused table as applied", title: "Measured with every offset at 0: the voltages are the CPU's fused V/F table as the CPU applies it." },
     unreach: a ? [notMeasuredCaption(unmeasuredOf(a, drawn, ids), ids), interpolatedCaption(a, drawn, ids)].filter(Boolean).join(" · ") : "",
+    unreachParts: a ? [notMeasuredCaption(unmeasuredOf(a, drawn, ids), ids), interpolatedCaption(a, drawn, ids)].filter(Boolean) : [], // G-252: one line each
   };
 }
 
@@ -934,11 +935,11 @@ export function chartSpec(model, { height = 360, margin = { t: 18, b: 34 } } = {
   return { empty: null, x, y, traces, ramps, markers, labels, cursorXs };
 }
 
-/** The pinned readout at a cursor frequency: "5600 MHz · 56×" then the highest and lowest units there (all of them when four or fewer). */
+/** The pinned readout at a cursor frequency: "56× · 5600 MHz" (G-252: the ratio first, as everywhere in the app) then the highest and lowest units there (all of them when four or fewer). */
 export function readoutParts(model, mhz) {
   const rows = tipRows(model, mhz).filter((r) => !r.s.dash);
   const fmt = (r) => (model.ymode === "mv" ? fmtMv(r.v) : r.v.toFixed(3)) + (r.exact ? "" : "~");
-  const head = ["", `${Math.round(mhz)} MHz · ${Math.round(mhz / 100)}${TIMES}`];
+  const head = ["", `${Math.round(mhz / 100)}${TIMES} · ${Math.round(mhz)} MHz`];
   if (!rows.length) return [head];
   const pick = rows.length <= 4 ? rows : [rows[0], rows[rows.length - 1]];
   const out = [head, ...pick.map((r, i) => [rows.length > 4 ? (i === 0 ? `max ${r.s.unit}` : `min ${r.s.unit}`) : r.s.unit, fmt(r), model.ymode === "mv" ? "" : "V"])];
@@ -1026,9 +1027,10 @@ export function curvesView() {
       const tags = h("span", { class: "lx-cv-tags", id: "cv-tags" });
       const tools = h("div", { class: "lx-cv-tools" }, primarySel, tags, h("span", { class: "lx-spacer" }), h("span", { class: "lx-lbl", text: "Compare" }), compareSel, ySeg.el, spreadLbl);
       let model = null;
-      const plotX = { min: 0, max: 1, title: "MHz · ratio = MHz / 100" };
+      const plotX = { min: 0, max: 1, title: "Ratio ×" }; // G-252: the axis is the ratio (MHz / 100), as in the rest of the app; the data stays in MHz
+      const ratioTick = (t) => String(Math.round(t / 100));
       const plotY = { min: 0, max: 1, title: "V" };
-      const plot = createPlot({ label: "Measured V/F curves: requested volts against frequency", height: PLOT_H, margin: PLOT_M, x: plotX, y: plotY, readout: (xv) => (model ? readoutParts(model, xv) : []) });
+      const plot = createPlot({ label: "Measured V/F curves: requested volts against ratio", height: PLOT_H, margin: PLOT_M, x: plotX, y: plotY, readout: (xv) => (model ? readoutParts(model, xv) : []) });
       plot.el.id = "cv-chart";
       let ramps = [];
       const decorate = () => {
@@ -1042,9 +1044,13 @@ export function curvesView() {
       }
       const chartEmpty = h("div", { class: "lx-cv-empty", id: "cv-chart-empty" });
       const legend = h("div", { class: "lx-legend lx-legend--pad", id: "cv-legend" });
+      // G-252: the notes are separate short lines (the baseline; the top-point check; what is not measured; what is interpolated); what VID means is behind a "?"
+      const vidQ = createQ("curves.vid");
       const chartNote = h("div", { class: "lx-tfoot-note", id: "cv-base-note" });
-      const unreach = h("div", { class: "lx-tfoot-note", id: "cv-unreach" });
-      const chartP = panel({ title: "Curve", meta: "", id: "cv-chart-panel", body: [tools, h("div", { class: "lx-plotbox" }, plot.el, chartEmpty), legend, chartNote, unreach] });
+      const noteRow = h("div", { class: "lx-cv-noterow", id: "cv-note-row" }, chartNote, vidQ.button);
+      const chartCheck = h("div", { class: "lx-tfoot-note", id: "cv-check-note", hidden: true });
+      const unreach = h("div", { class: "lx-cv-unreach", id: "cv-unreach" });
+      const chartP = panel({ title: "Curve", meta: "", id: "cv-chart-panel", body: [tools, h("div", { class: "lx-plotbox" }, plot.el, chartEmpty), legend, noteRow, vidQ.more, chartCheck, unreach] });
 
       // ---- TABLE
       const tSeg = createSegmented({ options: [{ value: "v", label: "Volts" }, { value: "delta", label: "Δ vs baseline mV" }], value: "v", label: "Table values", id: "cv-table-mode", onChange: (v) => { cv.tableDelta = v === "delta"; render(); } });
@@ -1121,7 +1127,7 @@ export function curvesView() {
         } else {
           ramps = spec.ramps;
           plot.el.dataset.ymode = model.ymode;
-          Object.assign(plotX, spec.x, { fmt: (t) => String(Math.round(t)) });
+          Object.assign(plotX, spec.x, { fmt: ratioTick });
           Object.assign(plotY, spec.y, { title: model.ymode === "mv" ? "Δ mV" : "V", fmt: (t) => (model.ymode === "mv" ? (t > 0 ? "+" : t < 0 ? MINUS : "") + Math.abs(t).toFixed(0) : t.toFixed(2)) });
           plot.draw({ traces: spec.traces, markers: spec.markers, labels: spec.labels, cursorXs: spec.cursorXs });
           decorate();
@@ -1136,11 +1142,14 @@ export function curvesView() {
           cv.live ? h("span", {}, h("span", { class: "lx-sw-mk" }), "point measured now") : null,
         ].filter(Boolean));
         const notes = curveNotes({ a, list: cv.list, live: cv.live !== null, baseline: baselineId(cv.list), drawn: ctl.drawnSet(), ids, wordsRead: !!cv.words, topChecks: ctl.topChecks(a) });
-        chartNote.textContent = `${notes.base}${notes.check ? " " + notes.check : ""} Requested voltage (VID): no sensor reports the voltage that reaches a core.`;
-        unreach.textContent = notes.unreach;
+        chartNote.textContent = notes.base;
+        chartCheck.textContent = notes.check;
+        chartCheck.hidden = !!spec.empty || !notes.check;
+        clear(unreach).append(...notes.unreachParts.map((t) => h("div", { class: "lx-tfoot-note", text: t })));
         legend.hidden = !!spec.empty;
-        chartNote.hidden = !!spec.empty;
-        unreach.hidden = !!spec.empty || !notes.unreach;
+        noteRow.hidden = !!spec.empty;
+        if (spec.empty) vidQ.close({ focus: false });
+        unreach.hidden = !!spec.empty || !notes.unreachParts.length;
         chartP.setMeta(a ? (cv.live ? "measuring" : curveTitle(a)) : "");
       }
       function renderTable() {

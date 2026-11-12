@@ -206,7 +206,7 @@
           "dialog": {
             "ok_label": "Apply 9 writes",
             "primary": "Apply 9 writes to the CPU?",
-            "secondary": "• V/F and ratio words — 8 writes (+1 if per-core voltage control is off):\n   ↑ raises a voltage: 2 lines listed first\n   ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n   ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n   P0 · point 5 · 53× · offset 0 → −19.5 mV\n   EC1 · whole curve · offset 0 → −30.3 mV\n   EC1 · OC point · ratio unset → 46×\n   turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• Power limits — 1 write: PL1 250 → 200 W\n\nEach write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.",
+            "secondary": "↑ raises a voltage: 2 lines listed first\n• ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n• ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n• P0 · point 5 · 53× · offset 0 → −19.5 mV\n• EC1 · whole curve · offset 0 → −30.3 mV\n• EC1 · OC point · ratio unset → 46×\n• turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• +1 setup write if per-core voltage control is off\n• PL1 250 → 200 W\n\nEach write is read back. Undo: Restore accepted, or a cold boot.",
             "title": "Linux XTU: confirm"
           },
           "plans": 2,
@@ -257,7 +257,7 @@
     "dialog": {
       "ok_label": "Apply 9 writes",
       "primary": "Apply 9 writes to the CPU?",
-      "secondary": "• V/F and ratio words — 8 writes (+1 if per-core voltage control is off):\n   ↑ raises a voltage: 2 lines listed first\n   ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n   ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n   P0 · point 5 · 53× · offset 0 → −19.5 mV\n   EC1 · whole curve · offset 0 → −30.3 mV\n   EC1 · OC point · ratio unset → 46×\n   turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• Power limits — 1 write: PL1 250 → 200 W\n\nEach write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.",
+      "secondary": "↑ raises a voltage: 2 lines listed first\n• ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n• ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n• P0 · point 5 · 53× · offset 0 → −19.5 mV\n• EC1 · whole curve · offset 0 → −30.3 mV\n• EC1 · OC point · ratio unset → 46×\n• turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• +1 setup write if per-core voltage control is off\n• PL1 250 → 200 W\n\nEach write is read back. Undo: Restore accepted, or a cold boot.",
       "title": "Linux XTU: confirm"
     },
     "intent": {
@@ -1799,7 +1799,7 @@
         "text": {
           "ok_label": "Apply 8 writes",
           "primary": "Apply 8 writes to the CPU?",
-          "secondary": "• V/F and ratio words — 8 writes (+1 if per-core voltage control is off):\n   ↑ raises a voltage: 2 lines listed first\n   ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n   ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n   P0 · point 5 · 53× · offset 0 → −19.5 mV\n   EC1 · whole curve · offset 0 → −30.3 mV\n   EC1 · OC point · ratio unset → 46×\n   turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n\nEach write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.",
+          "secondary": "↑ raises a voltage: 2 lines listed first\n• ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n• ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n• P0 · point 5 · 53× · offset 0 → −19.5 mV\n• EC1 · whole curve · offset 0 → −30.3 mV\n• EC1 · OC point · ratio unset → 46×\n• turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• +1 setup write if per-core voltage control is off\n\nEach write is read back. Undo: Restore accepted, or a cold boot.",
           "title": "Linux XTU: confirm"
         }
       },
@@ -1812,7 +1812,7 @@
         "text": {
           "ok_label": "Apply 13 writes",
           "primary": "Apply 13 writes to the CPU?",
-          "secondary": "• V/F and ratio words — 8 writes (+1 if per-core voltage control is off):\n   ↑ raises a voltage: 2 lines listed first\n   ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n   ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n   P0 · point 5 · 53× · offset 0 → −19.5 mV\n   EC1 · whole curve · offset 0 → −30.3 mV\n   EC1 · OC point · ratio unset → 46×\n   turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• Power limits — 2 writes: PL1 250 → 200 W, time window 56 → 28 s\n• Ratio caps and uncore — 3 writes: cpu 8, 9 max 49× → 40×, uncore max 40× → 38×\n\nEach write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.",
+          "secondary": "↑ raises a voltage: 2 lines listed first\n• ↑ P2 · OC point · ratio unset → 58× · target unset → 1.250 V\n• ↑ P3 · point 6 · 55× · offset 0 → +9.8 mV\n• P0 · point 5 · 53× · offset 0 → −19.5 mV\n• EC1 · whole curve · offset 0 → −30.3 mV\n• EC1 · OC point · ratio unset → 46×\n• turbo table P · 57 57 55 55 55 55 55 55 → 56 56 54 54 54 54 54 54\n• +1 setup write if per-core voltage control is off\n• PL1 250 → 200 W\n• time window 56 → 28 s\n• cpu 8, 9 max 49× → 40×\n• uncore max 40× → 38×\n\nEach write is read back. Undo: Restore accepted, or a cold boot.",
           "title": "Linux XTU: confirm"
         }
       },
@@ -1823,7 +1823,7 @@
         "text": {
           "ok_label": "Apply 20 writes",
           "primary": "Apply 20 writes to the CPU?",
-          "secondary": "• V/F and ratio words — 20 writes:\n   ↑ raises a voltage: 14 lines listed first\n   ↑ P0 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P1 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P10 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P11 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P12 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P13 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P2 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P3 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P4 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P5 · point 3 · 40× · offset 0 → +5 mV\n   ↑ P6 · point 3 · 40× · offset 0 → +5 mV\n   … and 9 more (3 of them raise a voltage), all listed in the review\n\nEach write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.",
+          "secondary": "↑ raises a voltage: 14 lines listed first\n• ↑ P0 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P1 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P10 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P11 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P12 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P13 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P2 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P3 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P4 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P5 · point 3 · 40× · offset 0 → +5 mV\n• ↑ P6 · point 3 · 40× · offset 0 → +5 mV\n• … and 9 more (3 of them raise a voltage), all listed in the review\n\nEach write is read back. Undo: Restore accepted, or a cold boot.",
           "title": "Linux XTU: confirm"
         }
       },
@@ -1835,7 +1835,7 @@
         "text": {
           "ok_label": "Apply 5 writes",
           "primary": "Apply 5 writes to the CPU?",
-          "secondary": "• V/F and ratio words — 3 writes:\n   P0 · OC point · 58× · target 1.300 V → 1.280 V\n• V/F and ratio words — 2 writes:\n   ↑ raises a voltage: 1 line listed first\n   ↑ EC0 · OC point · ratio not read → 47× · target not read → 1.100 V\n   EC0 · whole curve · offset not read → −15 mV\n   ring · point 3 · 40× · offset not read → −9.8 mV\n\nEach write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.",
+          "secondary": "• P0 · OC point · 58× · target 1.300 V → 1.280 V\n↑ raises a voltage: 1 line listed first\n• ↑ EC0 · OC point · ratio not read → 47× · target not read → 1.100 V\n• EC0 · whole curve · offset not read → −15 mV\n• ring · point 3 · 40× · offset not read → −9.8 mV\n\nEach write is read back. Undo: Restore accepted, or a cold boot.",
           "title": "Linux XTU: confirm"
         }
       }

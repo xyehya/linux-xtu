@@ -367,6 +367,64 @@ export const writesText = (writes, conditional, residual = 0) => {
   const extra = [conditional ? "+" + conditional + " if needed" : "", residual ? residualText(residual) : ""].filter(Boolean);
   return plural(writes, "write") + (extra.length ? " (" + extra.join("; ") + ")" : "");
 };
+/** G-252: "−49.8 mV" → "−54.7 mV" as "−49.8 → −54.7 mV" (the shared unit once, at the end). */
+export function arrowText(before, after) {
+  const unit = (x) => { const m = /\s(\S+)$/.exec(String(x)); return m ? m[1] : ""; };
+  const u = unit(after);
+  const b = u && unit(before) === u ? String(before).slice(0, -(u.length + 1)) : String(before);
+  return b + " → " + after;
+}
+
+/**
+ * G-252: what ONE section writes, one item per write, in plain words ("P0 point 5, −49.8 → −54.7 mV"; "turbo P table"; "Package long-term limit PL1, 268 W → 270 W").
+ * `view` = the kind's custom view (power / caps / uncore) when it has one. -> {items, certain, setup} or null when the step list is unusable (cut, or empty): the caller says only the count.
+ */
+export function writeItems(sec, view = null) {
+  const plan = sec && sec.plan;
+  if (!isObj(plan) || plan.steps_truncated === true) return null;
+  const vr = view && Array.isArray(view.rows) ? view.rows : null;
+  if (vr) {
+    const items = vr.map((r) => [r.unit, r.what].filter(Boolean).join(" ") + (r.before !== undefined && r.after !== undefined ? ", " + arrowText(r.before, r.after) : ""));
+    return items.length ? { items, certain: planWrites(plan), setup: planConditional(plan) } : null;
+  }
+  const steps = stepRows(plan);
+  if (!steps.length) return null;
+  const byUnit = new Map(planRows(plan).map((u) => [u.unit, u.rows]));
+  const items = [];
+  for (const st of steps) {
+    if (st.conditional) continue;
+    if (st.kind === "write_vf_point" && st.unit) {
+      const row = (byUnit.get(st.unit) || []).find((r) => r.point === st.point);
+      const label = st.unit + " " + (st.point === 0 ? "OC point" : "point " + st.point);
+      const parts = [];
+      if (row && row.a) {
+        const a = row.a;
+        const b = row.b && !row.b.unread ? row.b : null;
+        if (b && isNum(a.ratio) && b.ratio !== a.ratio) parts.push("ratio " + arrowText(isNum(b.ratio) ? b.ratio + TIMES : DASH, a.ratio + TIMES));
+        if (isNum(a.offset_mv) && !(b && sameOff(b.offset_mv, a.offset_mv))) parts.push(b && isNum(b.offset_mv) ? arrowText(fmtMv(b.offset_mv), fmtMv(a.offset_mv)) : fmtMv(a.offset_mv));
+        if (isNum(a.v_target_v) && !(b && sameVt(b.v_target_v, a.v_target_v))) parts.push("target " + (b && isNum(b.v_target_v) ? arrowText(fmtV(b.v_target_v), fmtV(a.v_target_v)) : fmtV(a.v_target_v)));
+      }
+      items.push(parts.length ? label + ", " + parts.join(", ") : label);
+    } else if (st.kind === "write_msr") items.push((st.unit || "turbo") + " table");
+    else items.push(st.label);
+  }
+  return { items, certain: planWrites(plan), setup: planConditional(plan) };
+}
+
+/** G-252: the sheet's "Writes" text from the per-section items: "1 write: P0 point 5, −49.8 → −54.7 mV (+1 setup write if per-core voltage control is off). Each write is read back." */
+export function writesLine(parts) {
+  const MAX = 4;
+  const setupWord = (n) => n + " setup " + (n === 1 ? "write" : "writes");
+  const text = parts.map((p) => {
+    if (p.certain === 0 && p.setup) return setupWord(p.setup) + ", only if per-core voltage control is off";
+    let body = plural(p.certain, "write");
+    if (p.items && p.items.length) body += ": " + (p.items.length > MAX ? p.items.slice(0, MAX).join("; ") + "; and " + (p.items.length - MAX) + " more (listed above)" : p.items.join("; "));
+    if (p.setup) body += " (+" + setupWord(p.setup) + " if per-core voltage control is off)";
+    return body;
+  });
+  return text.join(" · ") + ". Each write is read back.";
+}
+
 /** G-242 (QA-29): a plan that sends nothing at all: no write, and the helper does not say it could still add one (`nothing_to_do: false`, a restore's leftover OC point). */
 export const isEmptyPlan = (plan) => isObj(plan) && planWrites(plan) === 0 && planConditional(plan) === 0 && planResidual(plan) === 0 && plan.nothing_to_do !== false;
 
@@ -1014,7 +1072,7 @@ export function landFieldError(root, located) {
 
 // ---- DOM: the commit sheet (its CSS: styles/apply.css, linked by index.html) --------------------------------------------------------------------------
 
-/** Head tag of the sheet state: [text, tone] (tone = lx-tag modifier). */
+/** Head tag of the sheet state: [text, tone] (tone = lx-tag modifier), or null when there is nothing to say (a plan that is ready). */
 function stateTag(a, ctl) {
   if (a.state === "planning") return ["planning", ""];
   if (a.state === "confirming") return ["confirming", "set"];
@@ -1023,7 +1081,7 @@ function stateTag(a, ctl) {
   if (a.state === "review") {
     const g = ctl.gateInfo();
     if (g && g.nothing) return ["nothing to do", ""];
-    return g ? (g.replan ? [g.lead === "Expired" ? "expired" : "stale", "warn"] : ["locked", ""]) : ["plan ready", "ok"];
+    return g ? (g.replan ? [g.lead === "Expired" ? "expired" : "stale", "warn"] : ["locked", ""]) : null; // G-252: a plan that is ready says nothing; only the other states get a tag
   }
   const o = outcomeOf(a);
   if (!o) return ["not planned", "fault"];
@@ -1100,27 +1158,20 @@ export function createApplyDrawer({ store, bridge, toast, drawer, kinds = KINDS,
   }
 
   // ---- the parts of the body ----
-  const kindShort = (sec) => {
-    const spec = kinds[sec.kind] || {};
-    const fromEdits = sec.track || sec.label === spec.label || (sec.kind === "tune" && sec.draftRef !== undefined);
-    return spec.short && fromEdits ? spec.short : sec.label;
-  };
-
   function summaryRow(a) {
     const planned = a.sections.filter((s) => s.plan);
     const writes = planned.reduce((n, s) => n + planWrites(s.plan), 0);
-    const conds = planned.reduce((n, s) => n + planConditional(s.plan), 0);
     const resid = planned.reduce((n, s) => n + planResidual(s.plan), 0);
     const nothing = planned.length > 0 && a.state === "review" && !!(ctl.gateInfo() || {}).nothing;
     // G-242 (QA-05): a finished run shows what was SENT (the plan's count leaves out the conditional per-core enable, which may or may not have been needed)
     const sent = a.sections.map(writesSentOf);
     const finished = (a.state === "done" || a.state === "failed") && a.sections.some((s) => s.status === "done") && sent.every((n) => n !== null);
-    const count = nothing ? "Nothing to apply" : finished ? plural(sent.reduce((n, x) => n + x, 0), "write") + " sent" : writesText(writes, conds, resid);
-    const [tag, tone] = stateTag(a, ctl);
+    const count = nothing ? "Nothing to apply" : finished ? plural(sent.reduce((n, x) => n + x, 0), "write") + " sent" : writesText(writes, 0, resid); // G-252: the "+N if needed" is in the Effect line only
+    const tg = stateTag(a, ctl);
     const exp = planned.filter((s) => isNum(s.plan.expires_s) && s.issuedAt !== null).map((s) => Date.now() + s.plan.expires_s * 1000 - (performance.now() - s.issuedAt));
     return h("div", { class: "lx-sheet-sec ap-sum", id: "apply-summary" },
-      h("span", { class: "ap-sum-n" }, planned.length ? h("span", { class: "lx-mono", text: count }) : null, planned.length && !nothing ? " · " : null, nothing ? null : planned.length ? planned.map(kindShort).join(", ") : a.state === "planning" ? "Planning. Nothing is written." : "No plan"),
-      h("span", { class: ["lx-tag", tone ? "lx-tag--" + tone : ""], id: "apply-tag", dataset: { state: tag }, text: tag }),
+      h("span", { class: "ap-sum-n" }, planned.length ? h("span", { class: "lx-mono", text: count }) : a.state === "planning" ? "Planning. Nothing is written." : "No plan"), // G-252: no "V/F & ratios" subtitle
+      tg ? h("span", { class: ["lx-tag", tg[1] ? "lx-tag--" + tg[1] : ""], id: "apply-tag", dataset: { state: tg[0] }, text: tg[0] }) : null,
       exp.length && ["review", "confirming"].includes(a.state) ? h("span", { class: "ap-sum-exp" }, "expires ", h("span", { class: "lx-mono", text: clock(Math.min(...exp)) })) : null);
   }
 
@@ -1247,24 +1298,12 @@ export function createApplyDrawer({ store, bridge, toast, drawer, kinds = KINDS,
         isNum(vc.before_v) ? h("span", { class: "lx-dim" }, " now ", h("span", { class: "lx-mono", text: vc.before_v.toFixed(2) + " V" })) : null,
         h("span", { class: "lx-dim", text: (by ? " · " + by : "") + " · a prediction" }));
     }
-    const groups = a.sections.filter((s) => s.plan).flatMap((s) => {
-      const w = planWrites(s.plan);
-      const steps = s.kind === "tune" ? stepRows(s.plan) : [];
-      if (steps.length && !s.plan.steps_truncated) {
-        // G-242 (QA-10): named by the transport that carries it — the mailbox (V/F and ratio words) and the turbo tables (a plain MSR write) are different things
-        const msr = steps.filter((x) => x.kind === "write_msr").length;
-        const mailbox = steps.filter((x) => x.kind !== "write_msr" && !x.conditional).length;
-        const cond = steps.filter((x) => x.conditional).length;
-        const out = [];
-        if (mailbox) out.push(plural(mailbox, "mailbox write") + " (" + kindShort(s) + ")" + (cond ? " + " + cond + " if per-core voltage control is off" : ""));
-        else if (cond) out.push(cond + " per-core enable, only if it is off");
-        if (msr) out.push(plural(msr, "MSR write") + " (turbo " + (msr === 1 ? "table" : "tables") + ")");
-        return out;
-      }
-      const where = (kinds[s.kind] && kinds[s.kind].writesWord) || "";
-      return [plural(w, (where ? where + " " : "") + "write") + " (" + kindShort(s) + ")"];
+    const parts = a.sections.filter((s) => s.plan).map((s) => {
+      const k = kinds[s.kind] || {};
+      const view = k.view ? k.view(s.plan, store.get()) : null;
+      return writeItems(s, view) || { items: [], certain: planWrites(s.plan), setup: planConditional(s.plan) };
     });
-    if (groups.length && a.sections.some((s) => s.plan && !isEmptyPlan(s.plan))) add("Writes",groups.join(" · ") + " · each one sent alone and read back");
+    if (parts.length && a.sections.some((s) => s.plan && !isEmptyPlan(s.plan))) add("Writes", writesLine(parts));
     if (a.sections.some((s) => s.plan && s.plan.words_assumed === true)) add("Assumed", h("span", { class: "ap-warn-t", text: "Some words were not read in this session: the plan assumed their values. Read first for a plan based on what the CPU holds." }));
     const undo = [...new Set(a.sections.filter((s) => s.plan).map((s) => (kinds[s.kind] && kinds[s.kind].undo) || ""))].filter(Boolean);
     if (undo.length) add("How to undo", undo.join(" "));
@@ -1314,9 +1353,8 @@ export function createApplyDrawer({ store, bridge, toast, drawer, kinds = KINDS,
     const status = h("span", { class: "lx-sheet-status", id: "apply-why", role: "status" });
     nodes.push(status);
     const writes = a.sections.reduce((n, s) => n + (s.plan && s.status !== "done" ? planWrites(s.plan) : 0), 0);
-    const conds = a.sections.reduce((n, s) => n + (s.plan && s.status !== "done" ? planConditional(s.plan) : 0), 0);
     const resid = a.sections.reduce((n, s) => n + (s.plan && s.status !== "done" ? planResidual(s.plan) : 0), 0);
-    const extras = [conds ? "+" + conds + " if needed" : "", resid ? residualText(resid) : ""].filter(Boolean).join(" · ");
+    const extras = resid ? residualText(resid) : ""; // G-252: the "+N if needed" is in the Effect line only
     const go = button({ level: 4, label: "Apply " + plural(writes, "write"), cost: extras || null, id: "apply-go", hint: "state.apply", onClick: () => void ctl.apply() });
     if (a.state === "planning") {
       status.textContent = "Planning. Nothing is written.";

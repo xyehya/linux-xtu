@@ -11,7 +11,7 @@ import G from "../fixtures/g217/fixtures-g217.js";
 import { deriveThrottle } from "../store.js";
 import {
   tempsByCpu, coreReading, readingValue, unitLive, overviewRows, liveCell, liveFootnote, appendChartSample, seedChart, chartReasons, multipleSpec, MULTIPLES, agoText,
-  limitsNowRows, eventLine, acceptedLine, lastScreenLine, mbxLine, memModel, ageText, headSub, HISTORY_S,
+  limitsNowRows, eventLine, lastScreenLine, memModel, ageText, headSub, HISTORY_S,
 } from "../views/dashboard.js";
 import {
   sortChecks, checkState, mergeCpuLimits, limitRows, limitsNote, preflightSummary, countStatuses, topologyRows, fmtSigned, MINUS,
@@ -62,10 +62,10 @@ test("overview: readingValue keeps unavailable unavailable (no zero, no guess)",
   assert.equal(readingValue({ value: NaN, status: "ok" }).value, null);
 });
 
-test("overview: a unit's clock and busy are the mean of its CPUs, VID and temperature the highest", () => {
+test("overview: a unit's busy is the mean of its CPUs; clock (its fastest CPU, G-252), VID and temperature the highest", () => {
   const v = liveValues();
   const ec0 = unitLive(v, [8, 9, 10, 11]);
-  assert.equal(ec0.mhz, (4408 + 4409 + 4410 + 4411) / 4);
+  assert.equal(ec0.mhz, 4411);
   assert.equal(ec0.busy, (32 + 36 + 40 + 44) / 4);
   assert.equal(ec0.vid, 0.9 + 11 / 100);
   assert.equal(ec0.temp, null);
@@ -136,17 +136,11 @@ test("overview: a throttle event reads as a sentence; an unreadable record says 
   assert.equal(eventLine({ unparsable: "x" }).bad, true);
 });
 
-test("overview: state lines — accepted, last quick screen, mailbox requests as one quiet line, header subtitle", () => {
-  assert.equal(acceptedLine({ kind: "differs", n: 2 }), "differs in 2 units");
-  assert.equal(acceptedLine({ kind: "matches" }), "matches the CPU");
-  assert.equal(acceptedLine(null), "no accepted state to compare with");
+test("overview: last quick screen line (the accepted state and mailbox count are the top bar's, G-252), header subtitle", () => {
   assert.equal(lastScreenLine([], true), "none on this computer");
   assert.equal(lastScreenLine([], false), "not loaded yet");
   assert.match(lastScreenLine([{ errors: 0, stopped_by: "time", health: "clean", kind: "cpu", method: "integer", duration_s: 300, started: "2026-10-18T10:29:26Z" }], true), /^clean · CPU integer · 5 min · /);
   assert.match(lastScreenLine([{ errors: 3, kind: "cpu", method: "cache", duration_s: 60 }], true), /^3 errors · CPU cache · 1 min/);
-  assert.equal(mbxLine({ opsUsed: 6, opsBudget: 100000 }), "6 this boot · cap 100000");
-  assert.equal(mbxLine({ opsUsed: 6, opsBudget: 0 }), "6 this boot");
-  assert.equal(mbxLine(null), "n/a");
   assert.equal(headSub({ state: "connected" }, 99, 100), "live · 1 s");
   assert.equal(headSub({ state: "connected" }, 50, 100), "waiting · last sample 50 s ago");
   assert.equal(headSub({ state: "closed" }, 99, 100), "helper not connected");
@@ -195,12 +189,14 @@ test("dashboard: memModel is n/a with the helper's reason, or the decoded card",
   });
   assert.equal(m.headline, "DDR5-6400 · Gear 2 · 2N");
   assert.equal(m.primary, "32-39-39-102");
-  assert.deepEqual(m.rows.find((r) => r[0] === "tREFI"), ["tREFI", "n/a"]); // missing timing = n/a, not 0
+  assert.equal(m.rows.find((r) => r[0] === "tREFI" || r[0] === "tRFC"), undefined, "G-252: tRFC / tREFI are not in the main view");
+  assert.equal(m.rows.find((r) => r[0] === "Memory clock"), undefined, "G-252: 3200 MHz only restates DDR5-6400");
   assert.deepEqual(m.rows.find((r) => r[0] === "Peak bandwidth"), ["Peak bandwidth", "102.4 GB/s"]);
   assert.equal(m.dimms[0].temp, 41.2);
   assert.equal(m.dimms[1].temp, null);
   assert.equal(m.dimms[1].tempReason, "no sensor");
-  assert.equal(m.summary, "2 modules, read from 2 controller instances");
+  assert.equal(m.summary, "2 modules");
+  assert.equal(m.summaryTitle, "read from 2 controller instances");
 });
 
 test("dashboard: ageText", () => {

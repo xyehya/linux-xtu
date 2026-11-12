@@ -68,6 +68,7 @@ async function mount(log, opts) {
   doc.body.append(headEl, root);
   const view = A.auditView();
   view.mount(root, { store, bridge, toast: () => {}, head: createWorkHead(headEl), goto: () => {}, drawer: null });
+  if (!opts || opts.filter !== "changes") $(headEl, "#audit-filter [data-value=all]").click(); // G-252: the screen starts on Changes; these tests are about the whole log
   return { bridge, root, headEl, view };
 }
 

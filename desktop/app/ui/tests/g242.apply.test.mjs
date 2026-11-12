@@ -90,9 +90,10 @@ test("QA-05: the count is what the plan certainly sends; the conditional per-cor
   const plan = r.store.get().apply.sections[0].plan;
   const go = r.root.querySelector("#apply-go");
   assert.match(text(go), new RegExp("^Apply " + A.planWrites(plan) + " write"));
-  if (A.planConditional(plan)) {
-    assert.match(text(go), /\+1 if needed/);
-    assert.match(text(r.root.querySelector("#apply-summary")), /\(\+1 if needed\)/);
+  if (A.planConditional(plan)) { // G-252: the "+1 if needed" is said once, in the Effect line, in plain words
+    assert.doesNotMatch(text(go), /if needed/);
+    assert.doesNotMatch(text(r.root.querySelector("#apply-summary")), /if needed/);
+    assert.match(body(r), /\(\+1 setup write if per-core voltage control is off\)\. Each write is read back\./);
   }
   go.click();
   await until(() => r.store.get().apply.state === "done");
@@ -106,7 +107,7 @@ test("QA-10 / QA-12: a turbo apply is described as an MSR write, and its before/
   const bucket = model.turbo.P.ratios.length - 1;
   const r = await rig((m, d) => setBucket(m, d, "P", bucket, m.turbo.P.ratios[bucket] - 1));
   await review(r);
-  assert.match(body(r), /1 MSR write \(turbo table\)/);
+  assert.match(body(r), /1 write: turbo P table\. Each write is read back\./);
   assert.doesNotMatch(body(r), /mailbox/);
   const rows = () => r.root.querySelectorAll("table.ap-diff tbody tr").map((x) => text(x));
   const before = rows();

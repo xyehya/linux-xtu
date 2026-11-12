@@ -216,7 +216,8 @@ async function dashRig(t) {
   await until(() => store.get().throttleEvents.state !== "loading" && store.get().throttleEvents.state !== "idle");
   return { store, root, v, bridge };
 }
-const rec = (n) => ({ t_on: 1_700_000_000 + n * 100, t_off: 1_700_000_050 + n * 100, duration_s: 40, groups: { thermal: 0.8 }, peak_pkg_w: 250, peak_temp_c: 95 });
+// G-252: identical consecutive events collapse into one line, so the test records alternate their group
+const rec = (n) => ({ group: n % 2 ? "power" : "thermal", t_on: 1_700_000_000 + n * 100, t_off: 1_700_000_050 + n * 100, duration_s: 40, groups: { thermal: 0.8 }, peak_pkg_w: 250, peak_temp_c: 95 });
 
 test("Overview: the throttle events table is rebuilt only when the events changed", async (t) => {
   const { store, root } = await dashRig(t);

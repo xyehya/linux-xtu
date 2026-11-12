@@ -152,13 +152,17 @@ export function createOcBand(tc, section, { onFrequency = null } = {}) {
   const q = createQ("oc.voltage", { label: "About the OC point" });
   const range = h("span", { class: "lx-band-m" });
   const discard = button({ level: 0, label: "Discard OC edits", hint: "state.discard", attrs: { "data-discard-oc": kind }, onClick: () => tc.edit((m, d) => clearOcEdits(m, d, ids)) });
+  // G-251: without an OC point the band is one line (the ratio field and what to do); the voltage field and its "?" appear once a ratio makes the OC point
+  const vtLabel = label("oc.voltage");
+  const noOc = h("span", { class: "lx-band-m", dataset: { part: "no-oc" }, hidden: true });
   const bandEl = h(
     "div",
     { class: ["lx-band", "lx-band--top"] },
     h("span", { class: "lx-band-t", text: "OC point" }),
     label("oc.ratio", { term: "" }),
     ratioField.el,
-    label("oc.voltage"),
+    noOc,
+    vtLabel,
     vtField.el,
     q.button,
     h("span", { class: "lx-band-end" }, range, discard),
@@ -203,7 +207,9 @@ export function createOcBand(tc, section, { onFrequency = null } = {}) {
       value: locked ? null : vNow.state === "same" ? vNow.value : null,
       placeholder: locked ? "—" : vNow.state === "mixed" ? vNow.min.toFixed(3) + "…" + vNow.max.toFixed(3) : "",
     });
-    if (!rd && locked) setWhy(vtField.whyEl, "locked.needs_oc_ratio", { top: isNum(ft()) ? String(ft()) : "–" });
+    for (const e of [vtLabel, vtField.el, q.button]) e.hidden = locked && !rd;
+    noOc.hidden = !(locked && !rd);
+    noOc.textContent = "No OC point." + (isNum(ft()) ? " Set a ratio above " + ft() + TIMES + " to add one." : "");
     discard.hidden = !ids.some((id) => draft.units[id] && (draft.units[id].ratio !== undefined || draft.units[id].vt !== undefined));
     // prediction flags
     const flags = ocFlags(model, draft, ids, tc.baseFn());

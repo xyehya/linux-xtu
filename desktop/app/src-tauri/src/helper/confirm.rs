@@ -15,7 +15,8 @@
 //!   copy of the plan ([`item_of`]). V/F: one line per written point (`P0 · point 5 · 53× · offset 0 → −19.5 mV`), the whole-curve layer
 //!   apart (`EC1 · whole curve · offset 0 → −30.3 mV`), the OC point (`P2 · OC point · ratio unset → 58× · target unset → 1.250 V`), each
 //!   turbo table bucket by bucket; lines that raise a voltage (a positive offset, a higher OC target) come first, marked `↑`, and the dialog
-//!   says how many there are even when the list is cut ([`MAX_TUNE_LINES`]). A written value the plan does not describe — an unknown step,
+//!   says how many there are even when the list is cut ([`MAX_TUNE_LINES`]).
+//!   G-252: the dialog is the question (with the count), one bullet per write line, the setup writes that may follow and one closing line ("Each write is read back. Undo: ..."). A written value the plan does not describe — an unknown step,
 //!   a point without its after-value, a turbo table whose new ratios the shell cannot name, a step list the helper cut — fails closed: no
 //!   dialog, no approval (`CONFIRM_UNAVAILABLE`). `ui/fixtures/mock-backend.js` builds the same text (held to it by the contract samples).
 
@@ -540,8 +541,8 @@ impl ConfirmRequest {
         }
     }
 
-    /// One block per item (V/F: its value lines, voltage raises first and counted; others: one line), then what the writes do and how long
-    /// they last.
+    /// G-252: one bullet per write line (V/F: voltage raises first and counted; power, caps and uncore: one per target), the setup writes that may follow, then one short line:
+    /// each write is read back, and how to undo. The title (the question) carries the count; nothing else is repeated.
     pub fn secondary(&self) -> String {
         if self.only(Subject::Accept) {
             let mut lines: Vec<String> = self.items[0].targets.iter().skip(1).map(|t| format!("• {t}")).collect();
@@ -554,30 +555,41 @@ impl ConfirmRequest {
         let mut lines: Vec<String> = Vec::new();
         for i in &self.items {
             if i.subject != Subject::Plan(PlanKind::Tune) {
-                let what = if i.targets.is_empty() { String::new() } else { format!(": {}", i.targets.join(", ")) };
-                lines.push(format!("• {} — {}{what}", i.label, plural(i.writes, "write")));
+                if i.targets.is_empty() {
+                    lines.push(format!("• {} — {}", i.label, plural(i.writes, "write")));
+                } else {
+                    lines.extend(i.targets.iter().map(|t| format!("• {t}")));
+                }
                 continue;
             }
-            let mut extra = if i.conditional > 0 { format!(" (+{} if per-core voltage control is off)", i.conditional) } else { String::new() };
-            if i.residual_max > 0 {
-                extra.push_str(&format!(" (+ up to {} if a leftover OC point is found; the apply decides from its own reads, so they are not listed)", i.residual_max));
-            }
-            lines.push(format!("• {} — {}{extra}:", i.label, plural(i.writes, "write")));
             if i.raises > 0 {
-                lines.push(format!("   {RAISE_MARK}raises a voltage: {} listed first", plural(i.raises as u64, "line")));
+                lines.push(format!("{RAISE_MARK}raises a voltage: {} listed first", plural(i.raises as u64, "line")));
             }
             let cut = i.targets.len() > MAX_TUNE_LINES;
             let shown = if cut { MAX_TUNE_LINES - 1 } else { i.targets.len() };
-            lines.extend(i.targets.iter().take(shown).map(|t| format!("   {t}")));
+            lines.extend(i.targets.iter().take(shown).map(|t| format!("• {t}")));
             if cut {
                 let hidden_raises = i.raises.saturating_sub(shown);
                 let also = if hidden_raises > 0 { format!(" ({hidden_raises} of them raise a voltage)") } else { String::new() };
-                lines.push(format!("   … and {} more{also}, all listed in the review", i.targets.len() - shown));
+                lines.push(format!("• … and {} more{also}, all listed in the review", i.targets.len() - shown));
+            }
+            if i.conditional > 0 {
+                lines.push(format!("• +{} setup {} if per-core voltage control is off", i.conditional, if i.conditional == 1 { "write" } else { "writes" }));
+            }
+            if i.residual_max > 0 {
+                lines.push(format!("• + up to {} if a leftover OC point is found; the apply decides from its own reads, so they are not listed", i.residual_max));
             }
         }
         lines.push(String::new());
-        lines.push("Each write is sent alone and read back. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot.".to_string());
+        lines.push(self.undo_line());
         lines.join("\n")
+    }
+
+    /// The closing line: every write is read back, and what undoes it. V/F and ratio words last until a cold boot; power limits, caps and uncore until a reboot
+    /// (a cold boot also covers those, so a request with any V/F item says "cold boot").
+    pub fn undo_line(&self) -> String {
+        let tune = self.items.iter().any(|i| i.subject == Subject::Plan(PlanKind::Tune));
+        format!("Each write is read back. Undo: Restore accepted, or a {}.", if tune { "cold boot" } else { "reboot" })
     }
 
     /// The write button's label (never "OK"): names the action and its count.
@@ -779,7 +791,10 @@ mod tests {
         assert_eq!(raises, 2);
         let req = ConfirmRequest { items: vec![item_of(&sample_tune_record()).unwrap()] };
         assert_eq!(req.primary(), "Apply 8 writes to the CPU?");
-        assert!(req.secondary().starts_with("• V/F and ratio words — 8 writes (+1 if per-core voltage control is off):\n   ↑ raises a voltage: 2 lines listed first\n   ↑ P2 · OC point"), "{}", req.secondary());
+        assert!(req.secondary().starts_with("↑ raises a voltage: 2 lines listed first\n• ↑ P2 · OC point"), "{}", req.secondary());
+        assert!(req.secondary().contains("\n• +1 setup write if per-core voltage control is off\n"), "{}", req.secondary());
+        assert!(!req.secondary().contains("V/F and ratio words"), "the label and the writes count are not repeated under the title: {}", req.secondary());
+        assert!(req.secondary().ends_with("\n\nEach write is read back. Undo: Restore accepted, or a cold boot."), "{}", req.secondary());
     }
 
     #[test]
@@ -841,8 +856,8 @@ mod tests {
         assert_eq!((item.targets.len(), item.raises), (20, 14));
         let text = ConfirmRequest { items: vec![item] }.secondary();
         assert!(text.contains("↑ raises a voltage: 14 lines listed first"), "{text}");
-        assert!(text.contains("   … and 9 more (3 of them raise a voltage), all listed in the review"), "{text}");
-        assert_eq!(text.lines().filter(|l| l.starts_with("   ↑ P")).count(), 11);
+        assert!(text.contains("• … and 9 more (3 of them raise a voltage), all listed in the review"), "{text}");
+        assert_eq!(text.lines().filter(|l| l.starts_with("• ↑ P")).count(), 11);
     }
 
     #[test]
@@ -876,7 +891,9 @@ mod tests {
         let req = ConfirmRequest { items: vec![item_of(&sample_tune_record()).unwrap(), power(1, json!([{"key": "pl1_w", "before": 250_000_000, "value": 200_000_000}]))] };
         assert_eq!(req.primary(), "Apply 9 writes to the CPU?", "the conditional per-core enable is not counted");
         assert_eq!(req.ok_label(), "Apply 9 writes");
-        assert!(req.secondary().contains("\n• Power limits — 1 write: PL1 250 → 200 W\n"), "{}", req.secondary());
+        assert!(req.secondary().contains("\n• PL1 250 → 200 W\n"), "{}", req.secondary());
+        let power_only = ConfirmRequest { items: vec![power(1, json!([{"key": "pl1_w", "before": 250_000_000, "value": 200_000_000}]))] };
+        assert_eq!(power_only.secondary(), "• PL1 250 → 200 W\n\nEach write is read back. Undo: Restore accepted, or a reboot.", "power, caps and uncore undo with a reboot");
         let one = ConfirmRequest { items: vec![power(1, json!([{"key": "pl2_w", "value": 1}]))] };
         assert_eq!(one.ok_label(), "Apply 1 write");
         let acc = ConfirmRequest { items: vec![item_of_persist("profiles.accept", &json!({"name": "x"}))] };
@@ -942,7 +959,7 @@ mod tests {
 
     #[test]
     fn the_conditional_per_core_enable_is_not_a_counted_write_but_is_said() {
-        // QA-05: the helper's `writes` is what the plan certainly sends; the 0x15 step is listed with `conditional: true` and the dialog says "+1 if ..."
+        // QA-05: the helper's `writes` is what the plan certainly sends; the 0x15 step is listed with `conditional: true` and the dialog says "+1 setup write if ..."
         let item = item_of(&sample_tune_record()).unwrap();
         assert_eq!((item.writes, item.conditional), (8, 1));
         let mut r = sample_tune_record();
@@ -952,7 +969,7 @@ mod tests {
             "before": {"P0": {"5": {"ratio": 53, "offset_mv": 0.0}}}, "after": {"P0": {"5": {"ratio": 53, "offset_mv": -10.0}}}});
         let item = item_of(&rec(PlanKind::Tune, no_cond)).unwrap();
         assert_eq!(item.conditional, 0);
-        assert!(ConfirmRequest { items: vec![item] }.secondary().starts_with("• V/F and ratio words — 1 write:\n"));
+        assert!(ConfirmRequest { items: vec![item] }.secondary().starts_with("• P0 · point 5 · 53× · offset 0 → −10 mV\n"));
     }
 
     #[test]

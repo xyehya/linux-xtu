@@ -46,14 +46,15 @@ test("cores: the tab list is Cores · Frequency · Power · Ring & uncore with t
   const tabs = t.headEl.querySelectorAll("[role=tab]");
   assert.deepEqual(tabs.map((b) => text(b)), ["Cores", "Frequency", "Power", "Ring & uncore"]);
   assert.equal(t.headEl.querySelector("#subtab-cores").getAttribute("aria-selected"), "true");
-  assert.match(text(t.headEl), /Mailbox · cold boot clears/i);
+  assert.match(text(t.headEl), /Lost at cold boot/i);
+  assert.doesNotMatch(text(t.headEl), /mailbox/i);
   assert.equal(t.root.dataset.legacy, "false", "Cores is built in the new design");
   assert.ok(t.$("[data-tune-cores]"));
   assert.equal(t.root.querySelectorAll("[data-unit-table] tr[data-unit]").length, 13, "8 P-cores, 4 E-clusters, the ring");
   assert.deepEqual(t.root.querySelectorAll("[data-unit-table] tr[data-group]").map((r) => r.dataset.group), ["P", "E", "R"]);
   assert.equal(t.row("P0").getAttribute("aria-selected"), "true");
   assert.equal(text(t.$("[data-part=title]")), "P0 ★");
-  assert.match(text(t.$("[data-part=facts]")), /^cpu 0 · factory top 57× · max ratio 57× · no OC point · favored$/);
+  assert.match(text(t.$("[data-part=facts]")), /^cpu 0 · favored · no OC point$/, "the top ratio is in the unit list, not repeated in the header");
   assert.equal(t.vf().querySelectorAll("tr[data-ratio]").length, 8);
   assert.match(text(t.$("[data-unit-table]")), /E-clusters ?4 · 4 CPUs each, one curve/);
 });
@@ -63,7 +64,7 @@ test("cores: a click on a unit row selects it; Ctrl-click adds; the inspector fo
   fire(t.row("EC0"), "click");
   assert.deepEqual(t.store.get().tune.selection, ["EC0"]);
   assert.equal(text(t.$("[data-part=title]")), "EC0");
-  assert.match(text(t.$("[data-part=facts]")), /cpus 8–11 · 4 CPUs, one ratio, one curve · factory top 46× · runs 48× \(set at boot\), no OC point/);
+  assert.match(text(t.$("[data-part=facts]")), /^cpus 8–11 · 4 CPUs, one ratio, one curve · runs 48× \(set at boot\), no OC point$/);
   assert.ok(t.vf("E"));
   fire(t.row("P0"), "click", { ctrlKey: true });
   assert.deepEqual(t.store.get().tune.selection, ["P0", "EC0"]);
@@ -143,7 +144,9 @@ test("cores: the OC band — the voltage is locked until an OC ratio exists; a t
   const band = t.$("[data-oc-band='P']");
   const vt = band.querySelector("[data-oc='voltage'] input");
   assert.equal(vt.disabled, true);
-  assert.match(text(band), /Locked ?Set an OC ratio above the factory top \(57×\) first/);
+  assert.equal(text(band.querySelector("[data-part=no-oc]")), "No OC point. Set a ratio above 57× to add one.");
+  assert.equal(band.querySelector("[data-part=no-oc]").hidden, false);
+  assert.equal(vt.closest("[data-state]").hidden, true, "the voltage field waits for a ratio");
   const ratio = band.querySelector("[data-oc='ratio'] input");
   t.type(ratio, "200");
   assert.equal(ratio.closest("[data-state]").dataset.state, "refused");
@@ -153,6 +156,8 @@ test("cores: the OC band — the voltage is locked until an OC ratio exists; a t
   assert.equal(t.draft().units.P1.ratio, 58);
   assert.equal(t.draft().units.P1.vtAuto, true, "the new OC point takes the un-offset factory top voltage as its target");
   assert.equal(vt.disabled, false);
+  assert.equal(band.querySelector("[data-part=no-oc]").hidden, true, "an OC point exists: the one-line note goes");
+  assert.equal(vt.closest("[data-state]").hidden, false, "and the voltage field appears");
   const oc = t.vf().querySelector("tr[data-oc]");
   assert.ok(oc, "the OC point is the last row");
   assert.equal(oc.dataset.point, "9");
@@ -224,4 +229,31 @@ test("cores: a 1/1024 V read shows one decimal; Enter on it changes nothing; ↓
   key(f, "ArrowUp");
   assert.equal(t.draft().units.P0.pts[53], -18);
   assert.equal(f.value, "−17.6");
+});
+
+// ---------------------------------------------------------------- G-251
+test("G-251 cores: the unit list has one Top × column (the unit's own ceiling: P1 55, OC marked) and Offset; no OC, Curve top or Clock column", () => {
+  const t = mount();
+  const heads = t.root.querySelectorAll("[data-unit-table] thead th").map((th) => text(th)).filter(Boolean);
+  assert.deepEqual(heads, ["Unit", "Top×", "OffsetmV", "Edited"]);
+  const top = (id) => text(t.row(id).querySelector("[data-col='top']"));
+  assert.deepEqual(["P0", "P1", "P3", "P7", "ring"].map(top), ["57", "55", "57", "55", "39"], "the same value Tune › Frequency shows as Top ratio");
+  assert.equal(top("EC0"), "48 OC", "a boot-set ratio above the fused top is marked OC");
+  assert.equal(t.row("P0").querySelector("[data-col='clk']"), null);
+  assert.equal(t.row("P0").querySelector("[data-col='oc']"), null);
+  fire(t.row("P1"), "click");
+  t.type(t.$("[data-oc='ratio'] input"), "58");
+  assert.equal(top("P1"), "58 OC");
+});
+
+test("G-251 cores: After V and Δ columns appear only while the unit has a pending edit", () => {
+  const t = mount();
+  const heads = () => t.vf().querySelectorAll("thead th").filter((th) => !th.hidden).map((th) => text(th));
+  assert.deepEqual(heads(), ["Pt", "Ratio", "FactoryV", "OffsetmV", "NowV"]);
+  assert.equal(t.vf().querySelector("tr[data-ratio='53']").querySelectorAll("td").filter((td) => !td.hidden).length, 5);
+  t.type(t.field(53), "-30");
+  assert.deepEqual(heads(), ["Pt", "Ratio", "FactoryV", "OffsetmV", "NowV", "AfterV", "ΔmV"]);
+  assert.equal(t.vf().querySelector("tr[data-ratio='53']").querySelectorAll("td").filter((td) => !td.hidden).length, 7);
+  fire(t.$("[data-discard='P']"), "click");
+  assert.deepEqual(heads(), ["Pt", "Ratio", "FactoryV", "OffsetmV", "NowV"], "back after Discard");
 });

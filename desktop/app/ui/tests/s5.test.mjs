@@ -98,7 +98,7 @@ test("listCells / compareRefs: the table's short cells; compare offers the accep
   assert.equal(P.listCells(GET_P0).runtime, "not in profile");
   assert.equal(P.listCells(null).units, "—");
   const refs = P.compareRefs([{ name: "a", source: "accepted" }, { name: "a", source: "saved" }, { name: "b", source: "saved" }]);
-  assert.deepEqual(refs.map((r) => r.value), ["accepted", "read", "a", "b"]);
+  assert.deepEqual(refs.map((r) => r.value), ["accepted", "read", "b"], "G-252: the accepted state and the saved profile it was made from are one state, listed once");
   assert.deepEqual(P.compareRefs([]).map((r) => r.value), ["read"]);
 });
 
@@ -218,7 +218,9 @@ test("Setup screen: says it once — the command with Copy, Retry 0 req, the hel
 
 test("Audit screen: operations newest first; open one for its raw rows and a raw record; Changes and search filter", async () => {
   const m = await mountView(A.auditView());
-  assert.equal(await until(() => $$(m.root, "tr[data-op]").length === 2), true);
+  assert.equal(await until(() => $$(m.root, "tr[data-op]").length === 1), true, "G-252: the default filter is Changes");
+  assert.equal($(m.headEl, "#audit-filter [data-value=changes]").getAttribute("aria-pressed"), "true");
+  $(m.headEl, "#audit-filter [data-value=all]").click();
   assert.deepEqual($$(m.root, "tr[data-op]").map((tr) => tr.dataset.op), ["310", "297"]);
   $(m.root, "tr[data-op='310']").click();
   assert.equal($$(m.root, "tr[data-raw-row]").length, 7);
@@ -235,26 +237,24 @@ test("Audit screen: operations newest first; open one for its raw rows and a raw
   m.view.unmount();
 });
 
-test("System screen: glyphs worst first, Max ratio (cpufreq), boot restore only when the preflight says, Hints from the settings", async () => {
+test("System screen: glyphs worst first, Max ratio (cpufreq), a boot-restore link only when the preflight says, no Hints switch (the footer's), no link / mailbox rows (the top bar's)", async () => {
   const m = await mountView(SY.systemView());
   const rows = $$(m.root, "#sys-checks tr");
   assert.equal(rows[0].dataset.status, "unknown");
   assert.equal(text(rows[0].querySelector("td")), "?");
   assert.match(text($(m.root, "#sys-topology thead")), /Max ratio× cpufreq/);
-  const { boot_restore: _br, ...noBoot } = m.store.get().preflight; // the fixture carries boot_restore (G-243); without the field the panel stays hidden
+  const { boot_restore: _br, ...noBoot } = m.store.get().preflight; // the fixture carries boot_restore (G-243); without the field the link stays hidden
   setPreflight(m.store, noBoot);
-  assert.equal($(m.root, "#sys-boot").hidden, true);
+  assert.equal($(m.root, "#sys-boot-go").parentNode.hidden, true);
   setPreflight(m.store, { ...m.store.get().preflight, boot_restore: { state: "armed" } });
-  assert.equal($(m.root, "#sys-boot").hidden, false);
-  assert.match(text($(m.root, "#sys-boot-state")), /Boot restore:\s*armed/);
+  assert.equal($(m.root, "#sys-boot-go").parentNode.hidden, false);
+  assert.equal($(m.root, "#sys-boot"), null, "G-252: the state and the command are on Profiles only");
   // the mock has no settings commands: the controls say once that nothing is saved; notifications cannot change
   assert.equal(await until(() => !$(m.root, "#sys-unsaved").hidden), true);
   assert.match(text($(m.root, "#sys-unsaved")), new RegExp(HINTS["system.unsaved.why"].label));
   assert.equal($(m.root, "#sys-notify [data-value=on]").disabled, true);
-  $(m.root, "#sys-hints [data-value=quiet]").click();
-  assert.equal(m.store.get().prefs.hints, "quiet");
-  setPref(m.store, "hints", "on");
-  assert.equal($(m.root, "#sys-hints [data-value=on]").getAttribute("aria-pressed"), "true");
+  assert.equal($(m.root, "#sys-hints"), null, "G-252: the Hints switch is the footer's");
+  assert.doesNotMatch(text($(m.root, "#sys-helper")), /Link|Helper state|Mailbox requests|Last read|Last telemetry/, "G-252: the top bar says these");
   assert.equal(await until(() => /App version\s*0\.2\.0-dev/.test(text($(m.root, "#sys-helper")))), true, "the shell's app_version (the mock answers lib.rs VERSION)");
   m.view.unmount();
 });
